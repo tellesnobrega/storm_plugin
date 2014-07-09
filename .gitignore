@@ -48,3 +48,4 @@ sahara/openstack/common/db/sahara.sqlite
 .testrepository
 AUTHORS
 *.log
+.nfs*
