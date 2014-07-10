@@ -15,13 +15,13 @@
 
 import mock
 import pkg_resources as pkg
-import testtools
 
 from sahara.plugins.general import exceptions as ex
 from sahara.plugins.hdp import clusterspec as cs
 from sahara.plugins.hdp import hadoopserver
 from sahara.plugins.hdp.versions.version_1_3_2 import services as s
 from sahara.plugins import provisioning
+from sahara.tests.unit import base as sahara_base
 import sahara.tests.unit.plugins.hdp.hdp_test_base as base
 from sahara.topology import topology_helper as th
 from sahara import version
@@ -38,7 +38,7 @@ class TestCONF(object):
 @mock.patch('sahara.plugins.hdp.versions.version_1_3_2.services.HdfsService.'
             '_get_swift_properties',
             return_value=[])
-class ClusterSpecTest(testtools.TestCase):
+class ClusterSpecTest(sahara_base.SaharaTestCase):
     service_validators = {}
 
     def setUp(self):
@@ -344,9 +344,10 @@ class ClusterSpecTest(testtools.TestCase):
             '222.22.6666', '333.22.6666')
 
         master_ng = TestNodeGroup(
-            'master', [master_host], ['GANGLIA_SERVER',
-            'GANGLIA_MONITOR', 'NAGIOS_SERVER',
-            'AMBARI_SERVER', 'AMBARI_AGENT'])
+            'master', [master_host],
+            ['GANGLIA_SERVER',
+             'GANGLIA_MONITOR', 'NAGIOS_SERVER',
+             'AMBARI_SERVER', 'AMBARI_AGENT'])
         jt_ng = TestNodeGroup('jt', [jt_host], ["JOBTRACKER",
                               "GANGLIA_MONITOR", "AMBARI_AGENT"])
         nn_ng = TestNodeGroup('nn', [nn_host], ["NAMENODE",
@@ -354,9 +355,10 @@ class ClusterSpecTest(testtools.TestCase):
         snn_ng = TestNodeGroup('snn', [snn_host], ["SECONDARY_NAMENODE",
                                "GANGLIA_MONITOR", "AMBARI_AGENT"])
         slave_ng = TestNodeGroup(
-            'slave', [slave_host], ["DATANODE", "TASKTRACKER",
-            "GANGLIA_MONITOR", "HDFS_CLIENT", "MAPREDUCE_CLIENT",
-            "AMBARI_AGENT"])
+            'slave', [slave_host],
+            ["DATANODE", "TASKTRACKER",
+             "GANGLIA_MONITOR", "HDFS_CLIENT", "MAPREDUCE_CLIENT",
+             "AMBARI_AGENT"])
 
         cluster = base.TestCluster([master_ng, jt_ng, nn_ng,
                                    snn_ng, slave_ng])
@@ -565,12 +567,14 @@ class ClusterSpecTest(testtools.TestCase):
                                   '222.22.2222', '333.22.2222')
 
         node_group1 = TestNodeGroup(
-            'master', [server1], ["NAMENODE", "JOBTRACKER",
-            "SECONDARY_NAMENODE", "GANGLIA_SERVER", "GANGLIA_MONITOR",
-            "NAGIOS_SERVER", "AMBARI_SERVER", "AMBARI_AGENT"])
+            'master', [server1],
+            ["NAMENODE", "JOBTRACKER",
+             "SECONDARY_NAMENODE", "GANGLIA_SERVER", "GANGLIA_MONITOR",
+             "NAGIOS_SERVER", "AMBARI_SERVER", "AMBARI_AGENT"])
         node_group2 = TestNodeGroup(
-            'slave', [server2], ["TASKTRACKER", "DATANODE", "AMBARI_AGENT",
-            "GANGLIA_MONITOR"])
+            'slave', [server2],
+            ["TASKTRACKER", "DATANODE", "AMBARI_AGENT",
+             "GANGLIA_MONITOR"])
 
         cluster = base.TestCluster([node_group1, node_group2])
         cluster_config = cs.ClusterSpec(cluster_config_file)
@@ -700,12 +704,14 @@ class ClusterSpecTest(testtools.TestCase):
                                   '222.22.2222', '333.22.2222')
 
         node_group1 = TestNodeGroup(
-            'master', [server1], ["NAMENODE", "JOBTRACKER",
-            "SECONDARY_NAMENODE", "GANGLIA_SERVER", "GANGLIA_MONITOR",
-            "NAGIOS_SERVER", "AMBARI_SERVER", "AMBARI_AGENT"])
+            'master', [server1],
+            ["NAMENODE", "JOBTRACKER",
+             "SECONDARY_NAMENODE", "GANGLIA_SERVER", "GANGLIA_MONITOR",
+             "NAGIOS_SERVER", "AMBARI_SERVER", "AMBARI_AGENT"])
         node_group2 = TestNodeGroup(
-            'slave', [server2], ["TASKTRACKER", "DATANODE",
-            "AMBARI_AGENT", "GANGLIA_MONITOR"])
+            'slave', [server2],
+            ["TASKTRACKER", "DATANODE",
+             "AMBARI_AGENT", "GANGLIA_MONITOR"])
 
         cluster = base.TestCluster([node_group1, node_group2])
         cluster_config = cs.ClusterSpec(cluster_config_file)
@@ -732,12 +738,14 @@ class ClusterSpecTest(testtools.TestCase):
                                   '222.22.2222', '333.22.2222')
 
         node_group1 = TestNodeGroup(
-            'master', [server1], ["NAMENODE", "JOBTRACKER",
-            "SECONDARY_NAMENODE", "GANGLIA_SERVER", "GANGLIA_MONITOR",
-            "NAGIOS_SERVER", "AMBARI_SERVER", "AMBARI_AGENT"])
+            'master', [server1],
+            ["NAMENODE", "JOBTRACKER",
+             "SECONDARY_NAMENODE", "GANGLIA_SERVER", "GANGLIA_MONITOR",
+             "NAGIOS_SERVER", "AMBARI_SERVER", "AMBARI_AGENT"])
         node_group2 = TestNodeGroup(
-            'slave', [server2], ["TASKTRACKER", "DATANODE",
-            "AMBARI_AGENT", "GANGLIA_MONITOR"])
+            'slave', [server2],
+            ["TASKTRACKER", "DATANODE",
+             "AMBARI_AGENT", "GANGLIA_MONITOR"])
 
         cluster = base.TestCluster([node_group1, node_group2])
         cluster_config = cs.ClusterSpec(cluster_config_file)

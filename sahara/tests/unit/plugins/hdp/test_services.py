@@ -14,17 +14,17 @@
 # limitations under the License.
 
 import mock
-import testtools
 
 from sahara import exceptions as e
 from sahara.plugins.general import exceptions as ex
 from sahara.plugins.hdp.versions import versionhandlerfactory as vhf
+from sahara.tests.unit import base
 from sahara.tests.unit.plugins.hdp import hdp_test_base
 
 versions = ['1.3.2', '2.0.6']
 
 
-class ServicesTest(testtools.TestCase):
+class ServicesTest(base.SaharaTestCase):
     # TODO(jspeidel): test remaining service functionality which isn't
     # tested by coarser grained unit tests.
 
@@ -254,8 +254,14 @@ class ServicesTest(testtools.TestCase):
             'master.novalocal', 'master', '11111', 3,
             '111.11.1111', '222.11.1111')
         master_ng = hdp_test_base.TestNodeGroup(
-            'master', [master_host], ["NAMENODE", "JOBTRACKER",
-            "SECONDARY_NAMENODE", "TASKTRACKER", "DATANODE", "AMBARI_SERVER"])
+            'master',
+            [master_host],
+            ["NAMENODE",
+             "JOBTRACKER",
+             "SECONDARY_NAMENODE",
+             "TASKTRACKER",
+             "DATANODE",
+             "AMBARI_SERVER"])
         sqoop_host = hdp_test_base.TestServer(
             'sqoop.novalocal', 'sqoop', '11111', 3,
             '111.11.1111', '222.11.1111')
