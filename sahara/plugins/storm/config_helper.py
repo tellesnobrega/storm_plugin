@@ -17,10 +17,6 @@ from oslo.config import cfg
 
 from sahara import conductor as c
 from sahara.openstack.common import log as logging
-from sahara.plugins.general import utils
-from sahara.plugins import provisioning as p
-from sahara.topology import topology_helper as topology
-from sahara.utils import types as types
 
 
 conductor = c.API
@@ -35,27 +31,78 @@ def get_config_value(service, name, cluster=None):
                     ng.configuration()[service].get(name)):
                 return ng.configuration()[service][name]
 
-    for c in PLUGIN_CONFIGS:
-        if c.applicable_target == service and c.name == name:
-            return c.default_value
-
     raise RuntimeError("Unable to get parameter '%s' from service %s",
                        name, service)
 
 
-def generate_storm_config(configs, master_hostname, zk_hostnames):
-    
+def generate_storm_config(master_hostname, zk_hostnames):
+
     cfg = {
-      "nimbus.host": master_hostname, 
-      "worker.childopts": "-Xmx768m -Djava.net.preferIPv4Stack=true", 
-      "nimbus.childopts": "-Xmx1024m -Djava.net.preferIPv4Stack=true", 
-      "supervisor.childopts": "-Djava.net.preferIPv4Stack=true", 
-      "storm.zookeeper.servers": zk_hostnames, 
-      "ui.childopts": "-Xmx768m -Djava.net.preferIPv4Stack=true", 
-      "storm.local.dir": "/app/storm"
+        "nimbus.host": master_hostname,
+        "worker.childopts": "-Xmx768m -Djava.net.preferIPv4Stack=true",
+        "nimbus.childopts": "-Xmx1024m -Djava.net.preferIPv4Stack=true",
+        "supervisor.childopts": "-Djava.net.preferIPv4Stack=true",
+        "storm.zookeeper.servers": zk_hostnames,
+        "ui.childopts": "-Xmx768m -Djava.net.preferIPv4Stack=true",
+        "storm.local.dir": "/app/storm"
     }
 
-    return cfg 
+    return cfg
+
+
+def generete_slave_supervisor_conf(self):
+    conf = "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s" % (
+           "[program:storm-supervisor]",
+           'command=bash -exec "cd /usr/local/storm && bin/storm supervisor"',
+           "user=storm",
+           "autostart=true",
+           "autorestart=true",
+           "startsecs=10",
+           "startretries=999",
+           "log_stdout=true",
+           "log_stderr=true",
+           "logfile=/var/log/storm/supervisor.out",
+           "logfile_maxbytes=20MB",
+           "logfile_backups=10")
+
+    return conf
+
+
+def generate_master_supervisor_conf(self):
+    conf_n = "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n" % (
+        "[program:storm-nimbus]",
+        "command=/usr/local/storm/bin/storm nimbus",
+        "user=storm",
+        "autostart=true",
+        "autorestart=true",
+        "startsecs=10",
+        "startretries=999",
+        "log_stdout=true",
+        "log_stderr=true",
+        "logfile=/var/log/storm/nimbus.out",
+        "logfile_maxbytes=20MB",
+        "logfile_backups=10\n")
+    conf_u = "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n" % (
+        "[program:storm-ui]",
+        "command=/usr/local/storm/bin/storm ui",
+        "user=storm",
+        "autostart=true",
+        "autorestart=true",
+        "startsecs=10",
+        "startretries=999",
+        "log_stdout=true",
+        "log_stderr=true",
+        "logfile=/var/log/storm/ui.out",
+        "logfile_maxbytes=20MB",
+        "logfile_backups=10")
+
+    return conf_n + conf_u
+
+
+def generate_zookeeper_conf():
+    conf = "%s\n%s\n%s" % ("tickTime=2000", "dataDir=/var/zookeeper",
+            "clientPort=2181")
+    return conf
 
 
 def generate_storm_setup_script(env_configs):
@@ -68,16 +115,6 @@ def generate_storm_setup_script(env_configs):
     return "\n".join(script_lines)
 
 
-def generate_hosts_setup_script(instances):
-    # creates a script to add the ips and hostnames of machines
-    # to /etc/hosts of all instances of the cluster
-    script_lines = ["#!/bin/bash -x"]
-    for line in instances:
-        script_lines.append('echo "%s %s" >> /etc/hosts' % line
-                                % env_configs[line])
-
-    return "\n".join(script_lines)
-
 def extract_name_values(configs):
     return dict((cfg['name'], cfg['value']) for cfg in configs)
 
@@ -89,12 +126,3 @@ def _set_config(cfg, gen_cfg, name=None):
         for name in gen_cfg:
             cfg.update(gen_cfg[name]['conf'])
     return cfg
-
-
-def get_decommissioning_timeout(cluster):
-    return _get_general_cluster_config_value(cluster, DECOMISSIONING_TIMEOUT)
-
-
-def get_port_from_config(service, name, cluster=None):
-    address = get_config_value(service, name, cluster)
-    return utils.get_port_from_address(address)
