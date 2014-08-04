@@ -16,12 +16,15 @@
 import copy
 
 import mock
+import testtools
 
 from sahara import conductor as cond
 from sahara import exceptions as ex
 from sahara.plugins import base as pb
 from sahara.service.edp import job_manager
-from sahara.service.edp.workflow_creator import workflow_factory
+from sahara.service.edp import job_utils
+from sahara.service.edp.oozie import engine as oozie_engine
+from sahara.service.edp.oozie.workflow_creator import workflow_factory
 from sahara.swift import swift_helper as sw
 from sahara.tests.unit import base
 from sahara.utils import edp
@@ -49,7 +52,7 @@ class TestJobManager(base.SaharaWithDbTestCase):
         helper.return_value = 'ok'
 
         job, _ = _create_all_stack(edp.JOB_TYPE_PIG)
-        res = job_manager.create_workflow_dir(mock.Mock(), job, 'hadoop')
+        res = job_utils.create_hdfs_workflow_dir(mock.Mock(), job, 'hadoop')
         self.assertIn('/user/hadoop/special_name/', res)
 
         remote.reset_mock()
@@ -70,13 +73,13 @@ class TestJobManager(base.SaharaWithDbTestCase):
         conductor_raw_data.return_value = 'ok'
 
         job, _ = _create_all_stack(edp.JOB_TYPE_PIG)
-        res = job_manager.upload_job_files(mock.Mock(), 'job_prefix',
-                                           job, 'hadoop')
+        res = job_utils.upload_job_files_to_hdfs(mock.Mock(), 'job_prefix',
+                                                 job, 'hadoop')
         self.assertEqual(['job_prefix/script.pig'], res)
 
         job, _ = _create_all_stack(edp.JOB_TYPE_MAPREDUCE)
-        res = job_manager.upload_job_files(mock.Mock(), 'job_prefix',
-                                           job, 'hadoop')
+        res = job_utils.upload_job_files_to_hdfs(mock.Mock(), 'job_prefix',
+                                                 job, 'hadoop')
         self.assertEqual(['job_prefix/lib/main.jar'], res)
 
         remote.reset_mock()
@@ -85,11 +88,11 @@ class TestJobManager(base.SaharaWithDbTestCase):
 
     def test_add_postfix(self):
         self.override_config("job_workflow_postfix", 'caba')
-        res = job_manager._add_postfix('aba')
+        res = job_utils._add_postfix('aba')
         self.assertEqual("aba/caba/", res)
 
         self.override_config("job_workflow_postfix", '')
-        res = job_manager._add_postfix('aba')
+        res = job_utils._add_postfix('aba')
         self.assertEqual("aba/", res)
 
     @mock.patch('sahara.conductor.API.job_binary_get')
@@ -377,11 +380,37 @@ class TestJobManager(base.SaharaWithDbTestCase):
         self.assertEqual(1, job_ex_upd.call_count)
 
         new_status = job_ex_upd.call_args[0][2]["info"]["status"]
-        self.assertEqual('FAILED', new_status)
+        self.assertEqual(edp.JOB_STATUS_FAILED, new_status)
 
     def test_get_plugin(self):
-        plugin = job_manager._get_plugin(_create_cluster())
+        plugin = job_utils.get_plugin(_create_cluster())
         self.assertEqual("vanilla", plugin.name)
+
+    @mock.patch('sahara.conductor.API.job_get')
+    def test_job_type_supported(self, job_get):
+        job, job_exec = _create_all_stack(edp.JOB_TYPE_PIG)
+        job_get.return_value = job
+        self.assertIsNotNone(job_manager._get_job_engine(_create_cluster(),
+                                                         job_exec))
+
+        job.type = "unsupported_type"
+        self.assertIsNone(job_manager._get_job_engine(_create_cluster(),
+                                                      job_exec))
+
+    @mock.patch('sahara.conductor.API.job_get')
+    @mock.patch('sahara.conductor.API.job_execution_get')
+    @mock.patch('sahara.conductor.API.cluster_get')
+    def test_run_job_unsupported_type(self,
+                                      cluster_get, job_exec_get, job_get):
+        job, job_exec = _create_all_stack("unsupported_type")
+        job_exec_get.return_value = job_exec
+        job_get.return_value = job
+
+        cluster = _create_cluster()
+        cluster.status = "Active"
+        cluster_get.return_value = cluster
+        with testtools.ExpectedException(ex.EDPError):
+            job_manager._run_job(job_exec.id)
 
     @mock.patch('sahara.conductor.API.data_source_get')
     def test_get_data_sources(self, ds):
@@ -392,7 +421,7 @@ class TestJobManager(base.SaharaWithDbTestCase):
 
         ds.side_effect = _conductor_data_source_get
         input_source, output_source = (
-            job_manager._get_data_sources(job_exec, job))
+            job_utils.get_data_sources(job_exec, job))
 
         self.assertEqual('obj_s1', input_source)
         self.assertEqual('obj_s2', output_source)
@@ -410,12 +439,12 @@ class TestJobManager(base.SaharaWithDbTestCase):
         job, job_exec = _create_all_stack(edp.JOB_TYPE_JAVA, configs)
 
         input_source, output_source = (
-            job_manager._get_data_sources(job_exec, job))
+            job_utils.get_data_sources(job_exec, job))
 
         self.assertEqual(None, input_source)
         self.assertEqual(None, output_source)
 
-    @mock.patch('sahara.service.edp.job_manager._get_plugin')
+    @mock.patch('sahara.service.edp.job_utils.get_plugin')
     def test_get_oozie_job_params(self, getplugin):
         plugin = mock.Mock()
         getplugin.return_value = plugin
@@ -424,8 +453,8 @@ class TestJobManager(base.SaharaWithDbTestCase):
         plugin.get_name_node_uri.return_value = 'hdfs://localhost:8020'
 
         cluster = _create_cluster()
-        job_params = job_manager._get_oozie_job_params(cluster, 'hadoop',
-                                                       '/tmp')
+        oje = oozie_engine.OozieJobEngine(cluster)
+        job_params = oje._get_oozie_job_params('hadoop', '/tmp')
         self.assertEqual('http://localhost:50030', job_params["jobTracker"])
         self.assertEqual('hdfs://localhost:8020', job_params["nameNode"])
         self.assertEqual('hadoop', job_params["user.name"])
@@ -465,10 +494,10 @@ def _create_job_binary(id, type):
     return binary
 
 
-def _create_cluster():
+def _create_cluster(plugin_name='vanilla', plugin_version='1.2.1'):
     cluster = mock.Mock()
-    cluster.plugin_name = 'vanilla'
-    cluster.plugin_version = '1.2.1'
+    cluster.plugin_name = plugin_name
+    cluster.plugin_version = plugin_version
     return cluster
 
 
