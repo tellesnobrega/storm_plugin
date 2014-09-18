@@ -35,14 +35,17 @@ def get_config_value(service, name, cluster=None):
                        name, service)
 
 
+def get_plugin_configs():
+    return {}
+
 def generate_storm_config(master_hostname, zk_hostnames):
 
     cfg = {
-        "nimbus.host": master_hostname,
+        "nimbus.host": master_hostname.encode('ascii','ignore'),
         "worker.childopts": "-Xmx768m -Djava.net.preferIPv4Stack=true",
         "nimbus.childopts": "-Xmx1024m -Djava.net.preferIPv4Stack=true",
         "supervisor.childopts": "-Djava.net.preferIPv4Stack=true",
-        "storm.zookeeper.servers": zk_hostnames,
+        "storm.zookeeper.servers": [i.encode('ascii','ignore') for i in zk_hostnames],
         "ui.childopts": "-Xmx768m -Djava.net.preferIPv4Stack=true",
         "storm.local.dir": "/app/storm"
     }
@@ -50,7 +53,7 @@ def generate_storm_config(master_hostname, zk_hostnames):
     return cfg
 
 
-def generete_slave_supervisor_conf(self):
+def generate_slave_supervisor_conf():
     conf = "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s" % (
            "[program:storm-supervisor]",
            'command=bash -exec "cd /usr/local/storm && bin/storm supervisor"',
@@ -68,7 +71,7 @@ def generete_slave_supervisor_conf(self):
     return conf
 
 
-def generate_master_supervisor_conf(self):
+def generate_master_supervisor_conf():
     conf_n = "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n" % (
         "[program:storm-nimbus]",
         "command=/usr/local/storm/bin/storm nimbus",

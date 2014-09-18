@@ -20,22 +20,31 @@ LOG = logging.getLogger(__name__)
 
 
 def start_zookeeper(remote):
-    remote.execute_command("cd /opt/zookeeper/zookeeper-3.4.6 && bin/zkServer.sh start")
+    remote.execute_command("sudo /opt/zookeeper/zookeeper-3.4.6/bin/zkServer.sh start")
 
+def start_storm_supervisor(node):
+    _create_supervisor_log_file(node) 
+    _stop_supervisor_deamon(node)
+    _start_supervisor_deamon(node)
+        
+def start_storm_nimbus_and_ui(node):
+    _create_supervisor_log_file(node)
+    _stop_supervisor_deamon(node)
+    _start_supervisor_deamon(node)
 
-def start_storm_supervisor(slave_nodes):
-    for node in slave_nodes:
-        node.execute_command("sudo service supervisor start")
+def stop_storm_nimbus_and_ui(node):
+    _stop_supervisor_deamon(node)
 
+def stop_storm_supervisor(node):
+    _stop_supervisor_deamon(node)
 
-def start_storm_nimbus_and_ui(master_node):
-    master_node.execute_command("sudo service supervisor start")
+def _start_supervisor_deamon(node):
+    node.execute_command("sudo service supervisor start")
 
+def _stop_supervisor_deamon(node):
+    node.execute_command("sudo service supervisor stop")
 
-def stop_storm_nimbus_and_ui(master_node):
-    master_node.execute_command("sudo service supervisor stop")
-
-
-def stop_storm_supervisor(slave_nodes):
-    for node in slave_nodes:
-        node.execute_command("sudo service supervisor stop")
+def _create_supervisor_log_file(node):
+    node.execute_command("sudo mkdir -p /var/log/storm")
+    node.execute_command("sudo chmod -R 777 /var/log/storm")
+    node.execute_command("sudo chown -R storm:storm /var/log/storm")

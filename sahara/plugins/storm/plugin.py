@@ -83,7 +83,8 @@ class StormProvider(p.ProvisioningPluginBase):
         # start storm master
         if sm_instance:
             with remote.get_remote(sm_instance) as r:
-                run.start_storm_master(r)
+                run.start_zookeeper(r)
+                run.start_storm_nimbus_and_ui(r)
                 LOG.info("Storm master at '%s' has been started",
                          sm_instance.hostname())
 
@@ -113,12 +114,14 @@ class StormProvider(p.ProvisioningPluginBase):
         config = self._convert_dict_to_yaml(config_instances)
         supervisor_conf = c_helper.generate_slave_supervisor_conf()
         nimbus_ui_conf = c_helper.generate_master_supervisor_conf()
+        zk_conf = c_helper.generate_zookeeper_conf()
 
         for ng in cluster.node_groups:
             extra[ng.id] = {
                 'st_instances': config,
                 'slave_sv_conf': supervisor_conf,
-                'master_sv_conf': nimbus_ui_conf
+                'master_sv_conf': nimbus_ui_conf,
+                'zk_conf': zk_conf
             }
 
         return extra
@@ -131,7 +134,7 @@ class StormProvider(p.ProvisioningPluginBase):
 
     def _start_slaves(self, instance):
         with instance.remote() as r:
-            run.start_processes(r, "supervisor")
+            run.start_storm_supervisor(r)
 
     def _setup_instances(self, cluster, instances=None):
         extra = self._extract_configs_to_extra(cluster)
@@ -174,11 +177,22 @@ class StormProvider(p.ProvisioningPluginBase):
         files_storm = {
             '/usr/local/storm/conf/storm.yaml': ng_extra['st_instances']
         }
+        files_zk = {
+            '/opt/zookeeper/zookeeper-3.4.6/conf/zoo.cfg': ng_extra['zk_conf']
+        }
+        files_supervisor_master= {
+            '/etc/supervisor/supervisord.conf': ng_extra['master_sv_conf']
+        }
 
         with remote.get_remote(instance) as r:
-            r.write_files_to(files_storm)
-            r.write_files_to(files_supervisor)
-            self._push_master_configs(r, cluster, extra, instance)
+	    node_processes = instance.node_group.node_processes
+            r.write_files_to(files_storm, run_as_root=True)
+            if 'zookeeper' in node_processes: 
+                self._push_zk_configs(r, files_zk)
+            if 'nimbus' in node_processes:
+                self._push_supervisor_configs(r, files_supervisor_master)
+            if 'supervisor' in node_processes:
+                self._push_supervisor_configs(r, files_supervisor)
 
     def _set_cluster_info(self, cluster):
         st_master = utils.get_instance(cluster, "nimbus")
@@ -194,10 +208,9 @@ class StormProvider(p.ProvisioningPluginBase):
         ctx = context.ctx()
         conductor.cluster_update(ctx, cluster, {'info': info})
 
-    def _push_master_configs(self, r, cluster, extra, instance):
-        node_processes = instance.node_group.node_processes
-        ng_extra = extra[instance.node_group.id]
+    def _push_zk_configs(self, r, files):
+        r.write_files_to(files, run_as_root=True)
 
-        if 'nimbus' in node_processes:
-            r.write_file_to('/etc/supervisor/supervisord.conf',
-                            ng_extra['master_sv_conf'])
+    def _push_supervisor_configs(self, r, files):
+        r.append_to_files(files, run_as_root=True)
+
