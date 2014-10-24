@@ -202,7 +202,7 @@ class ApiValidatorTest(testtools.TestCase):
         self._validate_success(schema, "a" * 64)
         self._validate_failure(schema, "")
         self._validate_failure(schema, "hadoop-examples-1.2.1.jar")
-        self._validate_failure(schema, "hadoop-examples-1.2.1")
+        self._validate_success(schema, "hadoop-examples-1.2.1")
         self._validate_failure(schema, "hadoop-examples-1.2.1.")
         self._validate_failure(schema, "1")
         self._validate_failure(schema, "1a")
