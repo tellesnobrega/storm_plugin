@@ -22,6 +22,7 @@ import fixtures
 from keystoneclient.v2_0 import client as keystone_client
 from neutronclient.v2_0 import client as neutron_client
 from novaclient.v1_1 import client as nova_client
+from oslo.utils import excutils
 from oslotest import base
 from saharaclient.api import base as client_base
 import saharaclient.client as sahara_client
@@ -29,7 +30,6 @@ import six
 from swiftclient import client as swift_client
 from testtools import testcase
 
-from sahara.openstack.common import excutils
 from sahara.tests.integration.configs import config as cfg
 import sahara.utils.openstack.images as imgs
 from sahara.utils import ssh_remote
@@ -77,6 +77,9 @@ class ITestCase(testcase.WithAttributes, base.BaseTestCase):
         self.vanilla_config = cfg.ITConfig().vanilla_config
         self.vanilla_two_config = cfg.ITConfig().vanilla_two_config
         self.hdp_config = cfg.ITConfig().hdp_config
+        self.mapr_config = cfg.ITConfig().mapr_config
+        self.mapr4_1_config = cfg.ITConfig().mapr4_1_config
+        self.mapr4_2_config = cfg.ITConfig().mapr4_2_config
 
         telnetlib.Telnet(
             self.common_config.SAHARA_HOST, self.common_config.SAHARA_PORT
@@ -142,11 +145,11 @@ class ITestCase(testcase.WithAttributes, base.BaseTestCase):
 
     def create_node_group_template(self, name, plugin_config, description,
                                    node_processes, node_configs,
-                                   volumes_per_node=0, volume_size=0,
+                                   volumes_per_node=0, volumes_size=0,
                                    floating_ip_pool=None):
         data = self.sahara.node_group_templates.create(
             name, plugin_config.PLUGIN_NAME, plugin_config.HADOOP_VERSION,
-            self.flavor_id, description, volumes_per_node, volume_size,
+            self.flavor_id, description, volumes_per_node, volumes_size,
             node_processes, node_configs, floating_ip_pool)
         node_group_template_id = data.id
         return node_group_template_id
@@ -176,7 +179,7 @@ class ITestCase(testcase.WithAttributes, base.BaseTestCase):
             description, cluster_configs, node_groups,
             self.common_config.USER_KEYPAIR_ID, anti_affinity, net_id)
         self.cluster_id = data.id
-        self.poll_cluster_state(self.cluster_id)
+        return self.cluster_id
 
     def get_cluster_info(self, plugin_config):
         node_ip_list_with_node_processes = (
@@ -189,7 +192,7 @@ class ITestCase(testcase.WithAttributes, base.BaseTestCase):
             with excutils.save_and_reraise_exception():
                 print(
                     '\nFailure during check of node process deployment '
-                    'on cluster node: ' + str(e)
+                    'on cluster node: ' + six.text_type(e)
                 )
 
         # For example: method "create_cluster_and_get_info" return
@@ -271,7 +274,7 @@ class ITestCase(testcase.WithAttributes, base.BaseTestCase):
         except Exception as e:
             with excutils.save_and_reraise_exception():
                 print(
-                    '\nTelnet has failed: ' + str(e) +
+                    '\nTelnet has failed: ' + six.text_type(e) +
                     '  NODE IP: %s, PORT: %s. Passed %s minute(s).'
                     % (host, port, self.common_config.TELNET_TIMEOUT)
                 )
@@ -333,12 +336,21 @@ class ITestCase(testcase.WithAttributes, base.BaseTestCase):
                         'sudo -u %s bash -lc "hadoop job -list-active-trackers'
                         '" | grep "^tracker_" | wc -l'
                         % plugin_config.HADOOP_USER)[1]
-                    active_tasktracker_count = int(active_tasktracker_count)
+                    try:
+                        active_tasktracker_count = int(
+                            active_tasktracker_count)
+                    except ValueError:
+                        active_tasktracker_count = -1
+
                     active_datanode_count = self.execute_command(
                         'sudo -u %s bash -lc "hadoop dfsadmin -report" | '
-                        'grep "Datanodes available:.*" | awk \'{print $3}\''
+                        'grep -e "Datanodes available:.*" '
+                        '-e "Live datanodes.*" | grep -o "[0-9]*" | head -1'
                         % plugin_config.HADOOP_USER)[1]
-                    active_datanode_count = int(active_datanode_count)
+                    try:
+                        active_datanode_count = int(active_datanode_count)
+                    except ValueError:
+                        active_datanode_count = -1
 
                     if (active_tasktracker_count ==
                             node_info['tasktracker_count'] and
@@ -356,6 +368,25 @@ class ITestCase(testcase.WithAttributes, base.BaseTestCase):
             )
         finally:
             self.close_ssh_connection()
+
+    def await_active_tasktracker(self, node_info, plugin_config):
+        self.open_ssh_connection(
+            node_info['namenode_ip'], plugin_config.SSH_USERNAME)
+        for i in range(self.common_config.HDFS_INITIALIZATION_TIMEOUT * 6):
+            time.sleep(10)
+            active_tasktracker_count = self.execute_command(
+                'sudo -u %s bash -lc "hadoop job -list-active-trackers" '
+                '| grep "^tracker_" | wc -l'
+                % plugin_config.HADOOP_USER)[1]
+            active_tasktracker_count = int(active_tasktracker_count)
+            if (active_tasktracker_count == node_info['tasktracker_count']):
+                break
+        else:
+            self.fail(
+                'Tasktracker or datanode cannot be started within '
+                '%s minute(s) for namenode.'
+                % self.common_config.HDFS_INITIALIZATION_TIMEOUT)
+        self.close_ssh_connection()
 
 # --------------------------------Remote---------------------------------------
 
@@ -401,7 +432,7 @@ class ITestCase(testcase.WithAttributes, base.BaseTestCase):
             with excutils.save_and_reraise_exception():
                 print(
                     '\nFailure while helper script transferring '
-                    'to cluster node: ' + str(e)
+                    'to cluster node: ' + six.text_type(e)
                 )
         self.execute_command('chmod 777 script.sh')
 
@@ -548,7 +579,11 @@ class ITestCase(testcase.WithAttributes, base.BaseTestCase):
                        node_group_template_id_list=None):
         if not self.common_config.RETAIN_CLUSTER_AFTER_TEST:
             if cluster_id:
-                self.sahara.clusters.delete(cluster_id)
+                try:
+                    self.sahara.clusters.delete(cluster_id)
+                except client_base.APIException:
+                    # cluster in deleting state or deleted
+                    pass
 
                 try:
                     # waiting roughly for 300 seconds for cluster to terminate
@@ -588,7 +623,7 @@ class ITestCase(testcase.WithAttributes, base.BaseTestCase):
             'ERROR LOG *!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*'
             '!*!\n'
         )
-        print(message + str(exception))
+        print(message + six.text_type(exception))
         print(
             '\n!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!* END OF '
             'ERROR LOG *!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*!*'

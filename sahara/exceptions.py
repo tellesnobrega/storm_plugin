@@ -45,6 +45,8 @@ class NotFoundException(SaharaException):
         self.value = value
         if message:
             self.message = message % value
+        else:
+            self.message = self.message % value
 
 
 class NameAlreadyExistsException(SaharaException):
@@ -89,13 +91,14 @@ class RemoteCommandException(SaharaException):
         self.message = self.message % cmd
 
         if ret_code:
-            self.message += '\nReturn code: ' + str(ret_code)
+            self.message = '%s\nReturn code: %s' % (self.message,
+                                                    six.text_type(ret_code))
 
         if stderr:
-            self.message += '\nSTDERR:\n' + stderr
+            self.message = '%s\nSTDERR:\n%s' % (self.message, stderr)
 
         if stdout:
-            self.message += '\nSTDOUT:\n' + stdout
+            self.message = '%s\nSTDOUT:\n%s' % (self.message, stdout)
 
         self.message = self.message.decode('ascii', 'ignore')
 
@@ -146,6 +149,15 @@ class DBDuplicateEntry(SaharaException):
 class CreationFailed(SaharaException):
     message = _("Object was not created")
     code = "CREATION_FAILED"
+
+    def __init__(self, message=None):
+        if message:
+            self.message = message
+
+
+class CancelingFailed(SaharaException):
+    message = _("Operation was not canceled")
+    code = "CANCELING_FAILED"
 
     def __init__(self, message=None):
         if message:
@@ -247,3 +259,10 @@ class TimeoutException(SaharaException):
 
     def __init__(self, timeout):
         self.message = self.message % timeout
+
+
+class DeprecatedException(SaharaException):
+    code = "DEPRECATED"
+
+    def __init__(self, message):
+        self.message = message

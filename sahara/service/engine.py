@@ -37,7 +37,7 @@ conductor = c.API
 
 
 @six.add_metaclass(abc.ABCMeta)
-class Engine:
+class Engine(object):
     @abc.abstractmethod
     def create_cluster(self, cluster):
         pass
@@ -49,6 +49,17 @@ class Engine:
     @abc.abstractmethod
     def shutdown_cluster(self, cluster):
         pass
+
+    @abc.abstractmethod
+    def rollback_cluster(self, cluster, reason):
+        pass
+
+    @abc.abstractmethod
+    def get_type_and_version(self):
+        """Returns engine type and version
+
+         Result should be in the form 'type.major.minor'.
+         """
 
     def get_node_group_image_username(self, node_group):
         image_id = node_group.get_image_id()

@@ -14,10 +14,6 @@
 # Size of RPC connection pool. (integer value)
 #rpc_conn_pool_size=30
 
-# Modules of exceptions that are permitted to be recreated
-# upon receiving exception data from an rpc call. (list value)
-#allowed_rpc_exception_modules=oslo.messaging.exceptions,nova.exception,cinder.exception,exceptions
-
 # Qpid broker hostname. (string value)
 #qpid_hostname=localhost
 
@@ -46,6 +42,10 @@
 
 # Whether to disable the Nagle algorithm. (boolean value)
 #qpid_tcp_nodelay=true
+
+# The number of prefetched messages held by receiver. (integer
+# value)
+#qpid_receiver_capacity=1
 
 # The qpid topology version to use.  Version 1 is what was
 # originally used by impl_qpid.  Version 2 includes some
@@ -156,15 +156,6 @@
 # Heartbeat time-to-live. (integer value)
 #matchmaker_heartbeat_ttl=600
 
-# Host to locate redis. (string value)
-#host=127.0.0.1
-
-# Use this port to connect to redis host. (integer value)
-#port=6379
-
-# Password for Redis server (optional). (string value)
-#password=<None>
-
 # Size of RPC greenthread pool. (integer value)
 #rpc_thread_pool_size=64
 
@@ -210,8 +201,13 @@
 #log_exchange=false
 
 # Maximum length of job binary data in kilobytes that may be
-# stored or retrieved in a single operation (integer value)
+# stored or retrieved in a single operation. (integer value)
 #job_binary_max_KB=5120
+
+# Timeout for canceling job execution (in seconds). Sahara
+# will try to cancel job execution during this time. (integer
+# value)
+#job_canceling_timeout=300
 
 # If set to True, Sahara will use floating IPs to communicate
 # with instances. To make sure that all instances have
@@ -232,6 +228,16 @@
 # Use network namespaces for communication (only valid to use
 # in conjunction with use_neutron=True). (boolean value)
 #use_namespaces=false
+
+# Use rootwrap facility to allow non-root users to run the
+# sahara-all server instance and access private network IPs
+# (only valid to use in conjunction with use_namespaces=True)
+# (boolean value)
+#use_rootwrap=false
+
+# Rootwrap command to leverage.  Use in conjunction with
+# use_rootwrap=True (string value)
+#rootwrap_command=sudo sahara-rootwrap /etc/sahara/rootwrap.conf
 
 
 #
@@ -378,7 +384,7 @@
 
 # List of plugins to be loaded. Sahara preserves the order of
 # the list when returning it. (list value)
-#plugins=vanilla,hdp
+#plugins=vanilla,hdp,spark
 
 
 #
@@ -386,7 +392,7 @@
 #
 
 # Postfix for storing jobs in hdfs. Will be added to
-# /user/hadoop/. (string value)
+# '/user/<hdfs user>/' path. (string value)
 #job_workflow_postfix=
 
 
@@ -403,11 +409,11 @@
 #periodic_fuzzy_delay=60
 
 # Max interval size between periodic tasks execution in
-# seconds (integer value)
+# seconds. (integer value)
 #periodic_interval_max=60
 
 # Minimal "lifetime" in seconds for a transient cluster.
-# Cluster is guarantied to be "alive" within this time period.
+# Cluster is guaranteed to be "alive" within this time period.
 # (integer value)
 #min_transient_cluster_active_time=30
 
@@ -452,6 +458,29 @@
 
 
 #
+# Options defined in sahara.utils.notification.sender
+#
+
+# Notification level for outgoing notifications (string value)
+#notification_level=INFO
+
+# Notification publisher_id for outgoing notifications (string
+# value)
+#notification_publisher_id=<None>
+
+# Enables sending notifications to Ceilometer (boolean value)
+#enable_notifications=false
+
+
+#
+# Options defined in sahara.utils.openstack.cinder
+#
+
+# Version of the Cinder API to use. (integer value)
+#cinder_api_version=2
+
+
+#
 # Options defined in sahara.utils.openstack.keystone
 #
 
@@ -459,6 +488,24 @@
 # disabled, per-job clusters will not be terminated
 # automatically. (boolean value)
 #use_identity_api_v3=true
+
+
+#
+# Options defined in sahara.utils.proxy
+#
+
+# Enables Sahara to use a domain for creating temporary proxy
+# users to access Swift. If this is enabled a domain must be
+# created for Sahara to use. (boolean value)
+#use_domain_for_proxy_users=false
+
+# The domain Sahara will use to create new proxy users for
+# Swift object access. (string value)
+#proxy_user_domain_name=<None>
+
+# A list of the role names that the proxy user should assume
+# through trust for Swift object access. (list value)
+#proxy_user_role_names=Member
 
 
 #
@@ -595,7 +642,7 @@
 [keystone_authtoken]
 
 #
-# Options defined in keystoneclient.middleware.auth_token
+# Options defined in keystonemiddleware.auth_token
 #
 
 # Prefix to prepend at the beginning of the path. Deprecated,
@@ -712,6 +759,32 @@
 # value)
 #memcache_secret_key=<None>
 
+# (optional) number of seconds memcached server is considered
+# dead before it is tried again. (integer value)
+#memcache_pool_dead_retry=300
+
+# (optional) max total number of open connections to every
+# memcached server. (integer value)
+#memcache_pool_maxsize=10
+
+# (optional) socket timeout in seconds for communicating with
+# a memcache server. (integer value)
+#memcache_pool_socket_timeout=3
+
+# (optional) number of seconds a connection to memcached is
+# held unused in the pool before it is closed. (integer value)
+#memcache_pool_unused_timeout=60
+
+# (optional) number of seconds that an operation will wait to
+# get a memcache client connection from the pool. (integer
+# value)
+#memcache_pool_conn_get_timeout=10
+
+# (optional) use the advanced (eventlet safe) memcache client
+# pool. The advanced pool will only work under python 2.x.
+# (boolean value)
+#memcache_use_advanced_pool=false
+
 # (optional) indicate whether to set the X-Service-Catalog
 # header. If False, middleware will not ask for service
 # catalog on token validation and will not set the X-Service-
@@ -745,6 +818,22 @@
 # should be set to a single value for better performance.
 # (list value)
 #hash_algorithms=md5
+
+
+[matchmaker_redis]
+
+#
+# Options defined in oslo.messaging
+#
+
+# Host to locate redis. (string value)
+#host=127.0.0.1
+
+# Use this port to connect to redis host. (integer value)
+#port=6379
+
+# Password for Redis server (optional). (string value)
+#password=<None>
 
 
 [matchmaker_ring]

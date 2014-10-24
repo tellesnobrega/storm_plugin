@@ -28,51 +28,71 @@ opts = [
                 default=True,
                 help='Enables Sahara to use Keystone API v3. '
                      'If that flag is disabled, '
-                     'per-job clusters will not be terminated automatically.')
+                     'per-job clusters will not be terminated '
+                     'automatically.')
 ]
 CONF.register_opts(opts)
 
 
 def client():
+    '''Return the current context client.'''
     ctx = context.current()
+
+    return _client(username=ctx.username, token=ctx.token,
+                   tenant_id=ctx.tenant_id)
+
+
+def _client(username, password=None, token=None, tenant_name=None,
+            tenant_id=None, trust_id=None, domain_name=None):
+
+    if trust_id and not CONF.use_identity_api_v3:
+        raise Exception("Trusts aren't implemented in keystone api"
+                        " less than v3")
+
     auth_url = base.retrieve_auth_url()
 
+    client_kwargs = {'username': username,
+                     'password': password,
+                     'token': token,
+                     'tenant_name': tenant_name,
+                     'tenant_id': tenant_id,
+                     'trust_id': trust_id,
+                     'user_domain_name': domain_name,
+                     'auth_url': auth_url}
+
     if CONF.use_identity_api_v3:
-        keystone = keystone_client_v3.Client(username=ctx.username,
-                                             token=ctx.token,
-                                             tenant_id=ctx.tenant_id,
-                                             auth_url=auth_url)
+        keystone = keystone_client_v3.Client(**client_kwargs)
         keystone.management_url = auth_url
     else:
-        keystone = keystone_client.Client(username=ctx.username,
-                                          token=ctx.token,
-                                          tenant_id=ctx.tenant_id,
-                                          auth_url=auth_url)
+        keystone = keystone_client.Client(**client_kwargs)
 
     return keystone
 
 
 def _admin_client(project_name=None, trust_id=None):
-    if not CONF.use_identity_api_v3:
-        raise Exception('Trusts aren\'t implemented in keystone api'
-                        ' less than v3')
-
-    auth_url = base.retrieve_auth_url()
     username = CONF.keystone_authtoken.admin_user
     password = CONF.keystone_authtoken.admin_password
-    keystone = keystone_client_v3.Client(username=username,
-                                         password=password,
-                                         project_name=project_name,
-                                         auth_url=auth_url,
-                                         trust_id=trust_id)
-    keystone.management_url = auth_url
+    keystone = _client(username=username,
+                       password=password,
+                       tenant_name=project_name,
+                       trust_id=trust_id)
     return keystone
 
 
 def client_for_admin():
-    project_name = CONF.keystone_authtoken.admin_tenant_name
-    return _admin_client(project_name=project_name)
+    '''Return the Sahara admin user client.'''
+    return _admin_client(
+        project_name=CONF.keystone_authtoken.admin_tenant_name)
 
 
-def client_for_trusts(trust_id):
+def client_for_admin_from_trust(trust_id):
+    '''Return the Sahara admin user client scoped to a trust.'''
     return _admin_client(trust_id=trust_id)
+
+
+def client_for_proxy_user(username, password, trust_id=None):
+    '''Return a client for the proxy user specified.'''
+    return _client(username=username,
+                   password=password,
+                   domain_name=CONF.proxy_user_domain_name,
+                   trust_id=trust_id)

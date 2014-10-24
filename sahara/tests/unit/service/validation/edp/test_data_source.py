@@ -60,6 +60,9 @@ class TestDataSourceValidation(u.ValidationTestCase):
         }
         with testtools.ExpectedException(ex.InvalidCredentials):
             ds.check_data_source_create(data)
+        # proxy enabled should allow creation without credentials
+        self.override_config('use_domain_for_proxy_users', True)
+        ds.check_data_source_create(data)
 
     @mock.patch("sahara.service.validations."
                 "edp.base.check_data_source_unique_name")
@@ -79,6 +82,9 @@ class TestDataSourceValidation(u.ValidationTestCase):
         }
         with testtools.ExpectedException(ex.InvalidCredentials):
             ds.check_data_source_create(data)
+        # proxy enabled should allow creation without credentials
+        self.override_config('use_domain_for_proxy_users', True)
+        ds.check_data_source_create(data)
 
     @mock.patch("sahara.service.validations."
                 "edp.base.check_data_source_unique_name")
@@ -98,6 +104,9 @@ class TestDataSourceValidation(u.ValidationTestCase):
         }
         with testtools.ExpectedException(ex.InvalidCredentials):
             ds.check_data_source_create(data)
+        # proxy enabled should allow creation without credentials
+        self.override_config('use_domain_for_proxy_users', True)
+        ds.check_data_source_create(data)
 
     @mock.patch("sahara.service.validations."
                 "edp.base.check_data_source_unique_name")
@@ -209,5 +218,58 @@ class TestDataSourceValidation(u.ValidationTestCase):
             "url": "/tmp/output",
             "type": "hdfs",
             "description": "correct url schema for absolute path on local hdfs"
+        }
+        ds.check_data_source_create(data)
+
+    @mock.patch("sahara.service.validations."
+                "edp.base.check_data_source_unique_name")
+    def test_maprfs_creation_wrong_schema(self, check_data_source_unique_name):
+        check_data_source_unique_name.return_value = True
+
+        data = {
+            "name": "test_data_data_source",
+            "url": "maprf://test_cluster/",
+            "type": "maprfs",
+            "description": "incorrect url schema"
+        }
+        with testtools.ExpectedException(ex.InvalidException):
+            ds.check_data_source_create(data)
+
+    @mock.patch("sahara.service.validations."
+                "edp.base.check_data_source_unique_name")
+    def test_maprfs_creation_correct_url(self, check_data_source_unique_name):
+        check_data_source_unique_name.return_value = True
+
+        data = {
+            "name": "test_data_data_source",
+            "url": "maprfs:///test_cluster/",
+            "type": "maprfs",
+            "description": "correct url schema"
+        }
+        ds.check_data_source_create(data)
+
+    @mock.patch("sahara.service.validations."
+                "edp.base.check_data_source_unique_name")
+    def test_maprfs_creation_local_rel_url(self, check_ds_unique_name):
+        check_ds_unique_name.return_value = True
+        data = {
+            "name": "test_data_data_source",
+            "url": "mydata/input",
+            "type": "maprfs",
+            "description": ("correct url schema for"
+                            " relative path on local maprfs")
+        }
+        ds.check_data_source_create(data)
+
+    @mock.patch("sahara.service.validations."
+                "edp.base.check_data_source_unique_name")
+    def test_maprfs_creation_local_abs_url(self, check_ds_unique_name):
+        check_ds_unique_name.return_value = True
+        data = {
+            "name": "test_data_data_source",
+            "url": "/tmp/output",
+            "type": "maprfs",
+            "description": ("correct url schema for"
+                            " absolute path on local maprfs")
         }
         ds.check_data_source_create(data)

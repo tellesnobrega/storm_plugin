@@ -14,6 +14,7 @@
 # limitations under the License.
 
 from oslo.config import cfg
+from oslo.utils import timeutils as tu
 
 from sahara import conductor as c
 from sahara import context
@@ -22,7 +23,6 @@ from sahara.i18n import _
 from sahara.i18n import _LE
 from sahara.i18n import _LW
 from sahara.openstack.common import log as logging
-from sahara.openstack.common import timeutils as tu
 from sahara.utils.openstack import cinder
 from sahara.utils.openstack import nova
 
@@ -38,6 +38,7 @@ detach_timeout_opt = cfg.IntOpt(
 
 CONF = cfg.CONF
 CONF.register_opt(detach_timeout_opt)
+CONF.import_opt('cinder_api_version', 'sahara.utils.openstack.cinder')
 
 
 def attach_to_instances(instances):
@@ -66,11 +67,13 @@ def _await_attach_volumes(instance, devices):
 def _attach_volumes_to_node(node_group, instance):
     ctx = context.ctx()
     size = node_group.volumes_size
+    volume_type = node_group.volume_type
     devices = []
     for idx in range(1, node_group.volumes_per_node + 1):
         display_name = "volume_" + instance.instance_name + "_" + str(idx)
         device = _create_attach_volume(
-            ctx, instance, size, display_name)
+            ctx, instance, size, volume_type, display_name,
+            node_group.volumes_availability_zone)
         devices.append(device)
         LOG.debug("Attached volume %s to instance %s" %
                   (device, instance.instance_id))
@@ -80,9 +83,18 @@ def _attach_volumes_to_node(node_group, instance):
     _mount_volumes_to_node(instance, devices)
 
 
-def _create_attach_volume(ctx, instance, size, display_name=None):
-    volume = cinder.client().volumes.create(size=size,
-                                            display_name=display_name)
+def _create_attach_volume(ctx, instance, size, volume_type, name=None,
+                          availability_zone=None):
+    if CONF.cinder_api_version == 1:
+        kwargs = {'size': size, 'display_name': name}
+    else:
+        kwargs = {'size': size, 'name': name}
+
+    kwargs['volume_type'] = volume_type
+    if availability_zone is not None:
+        kwargs['availability_zone'] = availability_zone
+
+    volume = cinder.client().volumes.create(**kwargs)
     conductor.append_volume(ctx, instance, volume.id)
 
     while volume.status != 'available':

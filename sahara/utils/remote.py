@@ -56,6 +56,13 @@ class RemoteDriver(object):
     def get_userdata_template(self):
         """Returns userdata template preparing instance to work with driver."""
 
+    @abc.abstractmethod
+    def get_type_and_version(self):
+        """Returns engine type and version
+
+         Result should be in the form 'type.major.minor'.
+         """
+
 
 @six.add_metaclass(abc.ABCMeta)
 class Remote(object):
@@ -68,8 +75,8 @@ class Remote(object):
         """Returns HTTP client for a given instance's port."""
 
     @abc.abstractmethod
-    def close_http_sessions(self):
-        """Closes all cached HTTP sessions."""
+    def close_http_session(self, port):
+        """Closes cached HTTP session for a given instance's port."""
 
     @abc.abstractmethod
     def execute_command(self, cmd, run_as_root=False, get_stderr=False,
@@ -116,6 +123,10 @@ def setup_remote(driver, engine):
 
     DRIVER = driver
     DRIVER.setup_remote(engine)
+
+
+def get_remote_type_and_version():
+    return DRIVER.get_type_and_version()
 
 
 def _check_driver_is_loaded():

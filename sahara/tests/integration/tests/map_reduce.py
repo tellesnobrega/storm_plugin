@@ -13,7 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from sahara.openstack.common import excutils
+from oslo.utils import excutils
+
 from sahara.tests.integration.tests import base
 
 
@@ -122,7 +123,7 @@ class MapReduceTest(base.ITestCase):
                 self.open_ssh_connection(namenode_ip,
                                          plugin_config.SSH_USERNAME)
                 try:
-                    self.captupe_error_log_from_cluster_node(
+                    self.capture_error_log_from_cluster_node(
                         '/tmp/MapReduceTestOutput/log.txt')
                 finally:
                     self.close_ssh_connection()

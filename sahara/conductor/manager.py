@@ -28,6 +28,8 @@ CLUSTER_DEFAULTS = {
     "anti_affinity": [],
     "status_description": "",
     "info": {},
+    "rollback_info": {},
+    "sahara_info": {},
 }
 
 NODE_GROUP_DEFAULTS = {
@@ -35,8 +37,13 @@ NODE_GROUP_DEFAULTS = {
     "node_configs": {},
     "volumes_per_node": 0,
     "volumes_size": 0,
+    "volumes_availability_zone": None,
     "volume_mount_prefix": "/volumes/disk",
-    "floating_ip_pool": None
+    "volume_type": None,
+    "floating_ip_pool": None,
+    "security_groups": None,
+    "auto_security_group": False,
+    "availability_zone": None,
 }
 
 INSTANCE_DEFAULTS = {

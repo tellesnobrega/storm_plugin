@@ -45,23 +45,6 @@ class TestHeat(testtools.TestCase):
         userdata = "line1\nline2"
         self.assertEqual(h._prepare_userdata(userdata), '"line1",\n"line2"')
 
-    def test_get_anti_affinity_scheduler_hints(self):
-        inst_names = ['i1', 'i2']
-        expected = ('"scheduler_hints" : {"different_host": '
-                    '[{"Ref": "i1"}, {"Ref": "i2"}]},')
-        actual = h._get_anti_affinity_scheduler_hints(inst_names)
-        self.assertEqual(expected, actual)
-
-        inst_names = ['i1', 'i1']
-        expected = '"scheduler_hints" : {"different_host": [{"Ref": "i1"}]},'
-        actual = h._get_anti_affinity_scheduler_hints(inst_names)
-        self.assertEqual(expected, actual)
-
-        inst_names = []
-        expected = ''
-        actual = h._get_anti_affinity_scheduler_hints(inst_names)
-        self.assertEqual(expected, actual)
-
 
 class TestClusterTemplate(base.SaharaWithDbTestCase):
     """Checks valid structure of Resources section in generated Heat templates.
@@ -75,24 +58,24 @@ class TestClusterTemplate(base.SaharaWithDbTestCase):
     into Heat templates.
     """
 
-    def _make_node_groups(self, floating_ip_pool=None):
+    def _make_node_groups(self, floating_ip_pool=None, volume_type=None):
         ng1 = tu.make_ng_dict('master', 42, ['namenode'], 1,
                               floating_ip_pool=floating_ip_pool, image_id=None,
                               volumes_per_node=0, volumes_size=0, id=1,
-                              image_username='root')
+                              image_username='root', volume_type=None)
         ng2 = tu.make_ng_dict('worker', 42, ['datanode'], 1,
                               floating_ip_pool=floating_ip_pool, image_id=None,
                               volumes_per_node=2, volumes_size=10, id=2,
-                              image_username='root')
+                              image_username='root', volume_type=volume_type)
         return ng1, ng2
 
-    def _make_cluster(self, mng_network, ng1, ng2):
+    def _make_cluster(self, mng_network, ng1, ng2, anti_affinity=[]):
         return tu.create_cluster("cluster", "tenant1", "general",
                                  "1.2.1", [ng1, ng2],
                                  user_keypair_id='user_key',
                                  neutron_management_network=mng_network,
-                                 default_image_id='1', anti_affinity=[],
-                                 image_id=None)
+                                 default_image_id='1', image_id=None,
+                                 anti_affinity=anti_affinity)
 
     def _make_heat_template(self, cluster, ng1, ng2):
         heat_template = h.ClusterTemplate(cluster)
@@ -102,6 +85,24 @@ class TestClusterTemplate(base.SaharaWithDbTestCase):
                                            get_ud_generator('line2\nline3'))
         return heat_template
 
+    def test_get_anti_affinity_scheduler_hints(self):
+        ng1, ng2 = self._make_node_groups('floating')
+        cluster = self._make_cluster('private_net', ng1, ng2,
+                                     anti_affinity=["datanode"])
+        heat_template = self._make_heat_template(cluster, ng1, ng2)
+
+        ng1 = [ng for ng in cluster.node_groups if ng.name == "master"][0]
+        ng2 = [ng for ng in cluster.node_groups if ng.name == "worker"][0]
+
+        expected = ('"scheduler_hints" : '
+                    '{"group": {"Ref": "cluster-aa-group"}},')
+        actual = heat_template._get_anti_affinity_scheduler_hints(ng2)
+        self.assertEqual(expected, actual)
+
+        expected = ''
+        actual = heat_template._get_anti_affinity_scheduler_hints(ng1)
+        self.assertEqual(expected, actual)
+
     def test_load_template_use_neutron(self):
         """Test for Heat cluster template with Neutron enabled.
 
@@ -109,7 +110,7 @@ class TestClusterTemplate(base.SaharaWithDbTestCase):
         'worker' with 2 attached volumes 10GB size each
         """
 
-        ng1, ng2 = self._make_node_groups('floating')
+        ng1, ng2 = self._make_node_groups('floating', 'vol_type')
         cluster = self._make_cluster('private_net', ng1, ng2)
         heat_template = self._make_heat_template(cluster, ng1, ng2)
         self.override_config("use_neutron", True)
@@ -225,11 +226,11 @@ class TestClusterStack(testtools.TestCase):
         stack = FakeHeatStack('CREATE_IN_PROGRESS', 'CREATE_FAILED')
         with testtools.ExpectedException(
                 ex.HeatStackException,
-                msg="Heat stack failed with status CREATE_FAILED"):
+                value_re="Heat stack failed with status CREATE_FAILED"):
             h.wait_stack_completion(stack)
 
 
-class FakeHeatStack():
+class FakeHeatStack(object):
     def __init__(self, stack_status=None, new_status=None, stack_name=None):
         self.stack_status = stack_status or ''
         self.new_status = new_status or ''

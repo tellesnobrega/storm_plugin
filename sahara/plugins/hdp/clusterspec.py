@@ -13,16 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from sahara.openstack.common import jsonutils as json
+from oslo.serialization import jsonutils as json
+
+from sahara.i18n import _
 from sahara.openstack.common import log as logging
-from sahara.plugins.general import exceptions as ex
+from sahara.plugins import exceptions as ex
 from sahara.plugins.hdp.versions import versionhandlerfactory as vhf
 
 
 LOG = logging.getLogger(__name__)
 
 
-class ClusterSpec():
+class ClusterSpec(object):
     def __init__(self, config, version='1.3.2'):
         self._config_template = config
         self.services = []
@@ -213,14 +215,14 @@ class ClusterSpec():
         config_map[user_input.config.name] = user_input.value
 
 
-class Component():
+class Component(object):
     def __init__(self, name, component_type, cardinality):
         self.name = name
         self.type = component_type
         self.cardinality = cardinality
 
 
-class NodeGroup():
+class NodeGroup(object):
     def __init__(self, name):
         self.id = None
         self.name = name
@@ -238,14 +240,14 @@ class NodeGroup():
         return self.ng_storage_paths
 
 
-class User():
+class User(object):
     def __init__(self, name, password, groups):
         self.name = name
         self.password = password
         self.groups = groups
 
 
-class Instance():
+class Instance(object):
     def __init__(self, sahara_instance):
         self.inst_fqdn = sahara_instance.fqdn()
         self.management_ip = sahara_instance.management_ip
@@ -265,7 +267,7 @@ class Instance():
         return self.fqdn() == other.fqdn()
 
 
-class NormalizedClusterConfig():
+class NormalizedClusterConfig(object):
     def __init__(self, cluster_spec):
         self.hadoop_version = cluster_spec.version
         self.cluster_configs = []
@@ -312,12 +314,12 @@ class NormalizedClusterConfig():
             return 'boolean'
         else:
             raise ValueError(
-                "Could not determine property type for property '{0}' with "
-                "value: {1}".
-                format(prop, value))
+                _("Could not determine property type for property "
+                  "'%(property)s' with value: %(value)s") %
+                {"property": prop, "value": value})
 
 
-class NormalizedConfig():
+class NormalizedConfig(object):
     def __init__(self, name, config_type, default_value, target, scope):
         self.name = name
         self.description = None
@@ -328,13 +330,13 @@ class NormalizedConfig():
         self.scope = scope
 
 
-class NormalizedConfigEntry():
+class NormalizedConfigEntry(object):
     def __init__(self, config, value):
         self.config = config
         self.value = value
 
 
-class NormalizedNodeGroup():
+class NormalizedNodeGroup(object):
     def __init__(self, node_group):
         self.name = node_group.name
         self.node_processes = node_group.components

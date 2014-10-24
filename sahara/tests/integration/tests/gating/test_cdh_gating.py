@@ -24,7 +24,6 @@ from sahara.tests.integration.tests import map_reduce
 from sahara.tests.integration.tests import scaling
 from sahara.tests.integration.tests import swift
 from sahara.utils import edp as utils_edp
-from sahara.utils import files as f
 
 
 class CDHGatingTest(cluster_configs.ClusterConfigTest,
@@ -57,10 +56,10 @@ class CDHGatingTest(cluster_configs.ClusterConfigTest,
             self.get_image_id_and_ssh_username(self.cdh_config))
 
         self.volumes_per_node = 0
-        self.volume_size = 0
+        self.volumes_size = 0
         if not self.SKIP_CINDER_TEST:
             self.volumes_per_node = 2
-            self.volume_size = 2
+            self.volumes_size = 2
 
     @b.errormsg("Failure while 'nm-dn' node group template creation: ")
     def _create_nm_dn_ng_template(self):
@@ -82,7 +81,7 @@ class CDHGatingTest(cluster_configs.ClusterConfigTest,
             'plugin_config': self.cdh_config,
             'description': 'test node group template for CDH plugin',
             'volumes_per_node': self.volumes_per_node,
-            'volume_size': self.volume_size,
+            'volumes_size': self.volumes_size,
             'node_processes': ['NODEMANAGER'],
             'floating_ip_pool': self.floating_ip_pool,
             'node_configs': {}
@@ -97,7 +96,7 @@ class CDHGatingTest(cluster_configs.ClusterConfigTest,
             'plugin_config': self.cdh_config,
             'description': 'test node group template for CDH plugin',
             'volumes_per_node': self.volumes_per_node,
-            'volume_size': self.volume_size,
+            'volumes_size': self.volumes_size,
             'node_processes': ['DATANODE'],
             'floating_ip_pool': self.floating_ip_pool,
             'node_configs': {}
@@ -115,7 +114,7 @@ class CDHGatingTest(cluster_configs.ClusterConfigTest,
                 self.cdh_config.CDH_APT_KEY_URL,
                 'CM5 repo key URL (for debian-based only)':
                 self.cdh_config.CM_APT_KEY_URL,
-                'Enable Swift': not self.SKIP_SWIFT_TEST
+                'Enable Swift': True
             }
         }
         template = {
@@ -126,7 +125,7 @@ class CDHGatingTest(cluster_configs.ClusterConfigTest,
             'node_groups': [
                 {
                     'name': 'manager-node',
-                    'flavor_id': self.flavor_id,
+                    'flavor_id': self.cdh_config.MANAGERNODE_FLAVOR,
                     'node_processes': ['MANAGER'],
                     'floating_ip_pool': self.floating_ip_pool,
                     'count': 1
@@ -181,7 +180,8 @@ class CDHGatingTest(cluster_configs.ClusterConfigTest,
                 }
             }
         }
-        self.create_cluster(**cluster)
+        cluster_id = self.create_cluster(**cluster)
+        self.poll_cluster_state(cluster_id)
         self.cluster_info = self.get_cluster_info(self.cdh_config)
         self.await_active_workers_for_namenode(self.cluster_info['node_info'],
                                                self.cdh_config)
@@ -200,67 +200,38 @@ class CDHGatingTest(cluster_configs.ClusterConfigTest,
 
     @b.errormsg("Failure while EDP testing: ")
     def _check_edp(self):
-        self._edp_test()
+        self.poll_jobs_status(list(self._run_edp_test()))
 
-    def _edp_test(self):
-        path = 'tests/integration/tests/resources/'
-
+    def _run_edp_test(self):
         # check pig
-        pig_job = f.get_file_text(path + 'edp-job.pig')
-        pig_lib = f.get_file_text(path + 'edp-lib.jar')
-        self.edp_testing(job_type=utils_edp.JOB_TYPE_PIG,
-                         job_data_list=[{'pig': pig_job}],
-                         lib_data_list=[{'jar': pig_lib}],
-                         swift_binaries=False,
-                         hdfs_local_output=True)
+        pig_job = self.edp_info.read_pig_example_script()
+        pig_lib = self.edp_info.read_pig_example_jar()
+        yield self.edp_testing(
+            job_type=utils_edp.JOB_TYPE_PIG,
+            job_data_list=[{'pig': pig_job}],
+            lib_data_list=[{'jar': pig_lib}],
+            swift_binaries=False,
+            hdfs_local_output=True)
 
         # check mapreduce
-        mapreduce_jar = f.get_file_text(path + 'edp-mapreduce.jar')
-        mapreduce_configs = {
-            'configs': {
-                'mapred.mapper.class': 'org.apache.oozie.example.SampleMapper',
-                'mapred.reducer.class':
-                'org.apache.oozie.example.SampleReducer'
-            }
-        }
-        self.edp_testing(job_type=utils_edp.JOB_TYPE_MAPREDUCE,
-                         job_data_list=[],
-                         lib_data_list=[{'jar': mapreduce_jar}],
-                         configs=mapreduce_configs,
-                         swift_binaries=False,
-                         hdfs_local_output=True)
+        mapreduce_jar = self.edp_info.read_mapreduce_example_jar()
+        mapreduce_configs = self.edp_info.mapreduce_example_configs()
+        yield self.edp_testing(
+            job_type=utils_edp.JOB_TYPE_MAPREDUCE,
+            job_data_list=[],
+            lib_data_list=[{'jar': mapreduce_jar}],
+            configs=mapreduce_configs,
+            swift_binaries=False,
+            hdfs_local_output=True)
 
         # check mapreduce streaming
-        mapreduce_streaming_configs = {
-            'configs': {
-                'edp.streaming.mapper': '/bin/cat',
-                'edp.streaming.reducer': '/usr/bin/wc'
-            }
-        }
-        self.edp_testing(job_type=utils_edp.JOB_TYPE_MAPREDUCE_STREAMING,
-                         job_data_list=[],
-                         lib_data_list=[],
-                         configs=mapreduce_streaming_configs,
-                         swift_binaries=False,
-                         hdfs_local_output=True)
-
-        # check java
-        """
-        java_jar = f.get_file_text(
-            path + 'hadoop-mapreduce-examples-2.3.0.jar')
-        java_configs = {
-            'configs': {
-                'edp.java.main_class':
-                'org.apache.hadoop.examples.QuasiMonteCarlo'
-            },
-            'args': ['10', '10']
-        }
-        self.edp_testing(utils_edp.JOB_TYPE_JAVA,
-                         job_data_list=[],
-                         lib_data_list=[{'jar': java_jar}],
-                         configs=java_configs,
-                         swift_binaries=False,
-                         hdfs_local_output=True)"""
+        yield self.edp_testing(
+            job_type=utils_edp.JOB_TYPE_MAPREDUCE_STREAMING,
+            job_data_list=[],
+            lib_data_list=[],
+            configs=self.edp_info.mapreduce_streaming_configs(),
+            swift_binaries=False,
+            hdfs_local_output=True)
 
     @b.errormsg("Failure while cluster scaling: ")
     def _check_scaling(self):
@@ -311,7 +282,7 @@ class CDHGatingTest(cluster_configs.ClusterConfigTest,
 
     @b.errormsg("Failure while EDP testing after cluster scaling: ")
     def _check_edp_after_scaling(self):
-        self._edp_test()
+        self._check_edp()
 
     @testcase.skipIf(
         cfg.ITConfig().cdh_config.SKIP_ALL_TESTS_FOR_PLUGIN,

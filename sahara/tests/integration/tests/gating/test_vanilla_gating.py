@@ -13,24 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from oslo.utils import excutils
 from testtools import testcase
 
-from sahara.openstack.common import excutils
 from sahara.tests.integration.configs import config as cfg
 from sahara.tests.integration.tests import cinder
 from sahara.tests.integration.tests import cluster_configs
+from sahara.tests.integration.tests import edp
 from sahara.tests.integration.tests import map_reduce
 from sahara.tests.integration.tests import scaling
 from sahara.tests.integration.tests import swift
-from sahara.tests.integration.tests import vanilla_transient_cluster
 from sahara.utils import edp as utils_edp
 
 
 class VanillaGatingTest(cinder.CinderVolumeTest,
                         cluster_configs.ClusterConfigTest,
                         map_reduce.MapReduceTest, swift.SwiftTest,
-                        scaling.ScalingTest,
-                        vanilla_transient_cluster.TransientClusterTest):
+                        scaling.ScalingTest, edp.EDPTest):
     config = cfg.ITConfig().vanilla_config
     SKIP_CINDER_TEST = config.SKIP_CINDER_TEST
     SKIP_CLUSTER_CONFIG_TEST = config.SKIP_CLUSTER_CONFIG_TEST
@@ -38,11 +37,10 @@ class VanillaGatingTest(cinder.CinderVolumeTest,
     SKIP_MAP_REDUCE_TEST = config.SKIP_MAP_REDUCE_TEST
     SKIP_SWIFT_TEST = config.SKIP_SWIFT_TEST
     SKIP_SCALING_TEST = config.SKIP_SCALING_TEST
-    SKIP_TRANSIENT_CLUSTER_TEST = config.SKIP_TRANSIENT_CLUSTER_TEST
 
     @testcase.skipIf(config.SKIP_ALL_TESTS_FOR_PLUGIN,
                      'All tests for Vanilla plugin were skipped')
-    @testcase.attr('vanilla1', 'transient')
+    @testcase.attr('vanilla1')
     def test_vanilla_plugin_gating(self):
         self.vanilla_config.IMAGE_ID, self.vanilla_config.SSH_USERNAME = (
             self.get_image_id_and_ssh_username(self.vanilla_config))
@@ -55,21 +53,6 @@ class VanillaGatingTest(cinder.CinderVolumeTest,
         if self.common_config.NEUTRON_ENABLED:
             floating_ip_pool = self.get_floating_ip_pool_id_for_neutron_net()
             internal_neutron_net = self.get_internal_neutron_net_id()
-
-# ---------------------------TRANSIENT CLUSTER TESTING-------------------------
-
-        try:
-            self.transient_cluster_testing(
-                self.vanilla_config, floating_ip_pool, internal_neutron_net)
-        except Exception as e:
-            with excutils.save_and_reraise_exception():
-                message = 'Failure while transient cluster testing: '
-                self.print_error_log(message, e)
-
-        if self.vanilla_config.ONLY_TRANSIENT_CLUSTER_TEST:
-            return
-
-# ------------------------------CLUSTER CREATION-------------------------------
 
 # --------------------"tt-dn" node group template creation---------------------
 
@@ -99,10 +82,10 @@ class VanillaGatingTest(cinder.CinderVolumeTest,
 
         if not self.vanilla_config.SKIP_CINDER_TEST:
             volumes_per_node = 2
-            volume_size = 2
+            volumes_size = 2
         else:
             volumes_per_node = 0
-            volume_size = 0
+            volumes_size = 0
 
         try:
             node_group_template_tt_id = self.create_node_group_template(
@@ -110,7 +93,7 @@ class VanillaGatingTest(cinder.CinderVolumeTest,
                 plugin_config=self.vanilla_config,
                 description='test node group template for Vanilla plugin',
                 volumes_per_node=volumes_per_node,
-                volume_size=volume_size,
+                volumes_size=volumes_size,
                 node_processes=['tasktracker'],
                 node_configs={
                     'MapReduce': cluster_configs.TT_CONFIG
@@ -135,7 +118,7 @@ class VanillaGatingTest(cinder.CinderVolumeTest,
                 plugin_config=self.vanilla_config,
                 description='test node group template for Vanilla plugin',
                 volumes_per_node=volumes_per_node,
-                volume_size=volume_size,
+                volumes_size=volumes_size,
                 node_processes=['datanode'],
                 node_configs={
                     'HDFS': cluster_configs.DN_CONFIG
@@ -214,13 +197,14 @@ class VanillaGatingTest(cinder.CinderVolumeTest,
         try:
             cluster_name = "%s-%s-v1" % (self.common_config.CLUSTER_NAME,
                                          self.vanilla_config.PLUGIN_NAME)
-            self.create_cluster(
+            cluster_id = self.create_cluster(
                 name=cluster_name,
                 plugin_config=self.vanilla_config,
                 cluster_template_id=cluster_template_id,
                 description='test cluster',
                 cluster_configs={}
             )
+            self.poll_cluster_state(cluster_id)
 
             cluster_info = self.get_cluster_info(self.vanilla_config)
             self.await_active_workers_for_namenode(cluster_info['node_info'],
@@ -265,64 +249,49 @@ class VanillaGatingTest(cinder.CinderVolumeTest,
 
 # ---------------------------------EDP TESTING---------------------------------
 
-        path = 'sahara/tests/integration/tests/resources/'
-        pig_job_data = open(path + 'edp-job.pig').read()
-        pig_lib_data = open(path + 'edp-lib.jar').read()
-        mapreduce_jar_data = open(path + 'edp-mapreduce.jar').read()
+        def edp_test():
+            pig_job_data = self.edp_info.read_pig_example_script()
+            pig_lib_data = self.edp_info.read_pig_example_jar()
+            mapreduce_jar_data = self.edp_info.read_mapreduce_example_jar()
+            # This is a modified version of WordCount that takes swift configs
+            java_lib_data = self.edp_info.read_java_example_lib()
 
-        # This is a modified version of WordCount that takes swift configs
-        java_lib_data = open(path + 'edp-java/edp-java.jar').read()
-        java_configs = {
-            "configs": {
-                "edp.java.main_class":
-                    "org.openstack.sahara.examples.WordCount"
-            }
-        }
+            job_ids = []
+            job_id = self.edp_testing(
+                job_type=utils_edp.JOB_TYPE_PIG,
+                job_data_list=[{'pig': pig_job_data}],
+                lib_data_list=[{'jar': pig_lib_data}],
+                swift_binaries=True,
+                hdfs_local_output=True)
+            job_ids.append(job_id)
 
-        mapreduce_configs = {
-            "configs": {
-                "mapred.mapper.class":
-                    "org.apache.oozie.example.SampleMapper",
-                "mapred.reducer.class":
-                    "org.apache.oozie.example.SampleReducer"
-            }
-        }
-        mapreduce_streaming_configs = {
-            "configs": {
-                "edp.streaming.mapper": "/bin/cat",
-                "edp.streaming.reducer": "/usr/bin/wc"
-            }
-        }
-        try:
-            self.edp_testing(job_type=utils_edp.JOB_TYPE_PIG,
-                             job_data_list=[{'pig': pig_job_data}],
-                             lib_data_list=[{'jar': pig_lib_data}],
-                             swift_binaries=True,
-                             hdfs_local_output=True)
-            self.edp_testing(job_type=utils_edp.JOB_TYPE_MAPREDUCE,
-                             job_data_list=[],
-                             lib_data_list=[{'jar': mapreduce_jar_data}],
-                             configs=mapreduce_configs,
-                             swift_binaries=True,
-                             hdfs_local_output=True)
-            self.edp_testing(job_type=utils_edp.JOB_TYPE_MAPREDUCE_STREAMING,
-                             job_data_list=[],
-                             lib_data_list=[],
-                             configs=mapreduce_streaming_configs)
-            self.edp_testing(job_type=utils_edp.JOB_TYPE_JAVA,
-                             job_data_list=[],
-                             lib_data_list=[{'jar': java_lib_data}],
-                             configs=java_configs,
-                             pass_input_output_args=True)
+            job_id = self.edp_testing(
+                job_type=utils_edp.JOB_TYPE_MAPREDUCE,
+                job_data_list=[],
+                lib_data_list=[{'jar': mapreduce_jar_data}],
+                configs=self.edp_info.mapreduce_example_configs(),
+                swift_binaries=True,
+                hdfs_local_output=True)
+            job_ids.append(job_id)
 
-        except Exception as e:
-            with excutils.save_and_reraise_exception():
-                self.delete_objects(
-                    cluster_info['cluster_id'], cluster_template_id,
-                    node_group_template_id_list
-                )
-                message = 'Failure while EDP testing: '
-                self.print_error_log(message, e)
+            job_id = self.edp_testing(
+                job_type=utils_edp.JOB_TYPE_MAPREDUCE_STREAMING,
+                job_data_list=[],
+                lib_data_list=[],
+                configs=self.edp_info.mapreduce_streaming_configs())
+            job_ids.append(job_id)
+
+            job_id = self.edp_testing(
+                job_type=utils_edp.JOB_TYPE_JAVA,
+                job_data_list=[],
+                lib_data_list=[{'jar': java_lib_data}],
+                configs=self.edp_info.java_example_configs(),
+                pass_input_output_args=True)
+            job_ids.append(job_id)
+
+            self.poll_jobs_status(job_ids)
+
+        edp_test()
 
 # -----------------------------MAP REDUCE TESTING------------------------------
 
@@ -454,6 +423,10 @@ class VanillaGatingTest(cinder.CinderVolumeTest,
                     message = ('Failure during check of Swift availability '
                                'after cluster scaling: ')
                     self.print_error_log(message, e)
+
+# ----------------------------- EDP AFTER SCALING -----------------------------
+
+            edp_test()
 
 # ---------------------------DELETE CREATED OBJECTS----------------------------
 

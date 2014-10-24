@@ -3,13 +3,13 @@ Setting Up a Development Environment
 
 This page describes how to setup a Sahara development environment by either
 installing it as a part of DevStack or pointing a local running instance at an
-external OpenStack. You should be able to debug and test your changes without 
+external OpenStack. You should be able to debug and test your changes without
 having to deploy Sahara.
 
 Setup a Local Environment with Sahara inside DevStack
 -----------------------------------------------------
 
-See `the main article <devstack.html>`_.
+See :doc:`the main article <devstack>`.
 
 Setup a Local Environment with an external OpenStack
 ----------------------------------------------------
@@ -38,6 +38,12 @@ On Fedora-based distributions (e.g., Fedora/RHEL/CentOS/Scientific Linux):
 
     $ sudo yum install git-core python-devel python-virtualenv gcc python-pip mariadb-devel postgresql-devel
     $ sudo pip install tox
+
+On openSUSE-based distributions (SLES 12, openSUSE, Factory or Tumbleweed)::
+
+.. sourcecode:: console
+
+    $ sudo zypper in gcc git libmysqlclient-devel postgresql-devel python-devel python-pip python-tox python-virtualenv
 
 2. Grab the code from GitHub:
 

@@ -1,12 +1,20 @@
 {
     "AWSTemplateFormatVersion" : "2010-09-09",
-    "Description" : "Hadoop Cluster by Sahara",
+    "Description" : "Data Processing Cluster by Sahara",
 
     "Resources" : {
+        "cluster-aa-group" : {
+            "Type" : "OS::Nova::ServerGroup",
+            "Properties" : {
+                "name" : "cluster-aa-group",
+                "policies": ["anti-affinity"]
+            }
+        },
         "cluster-worker-001-port" : {
             "Type" : "OS::Neutron::Port",
             "Properties" : {
-               "network_id" : "private_net"
+               "network_id" : "private_net",
+               "replacement_policy": "AUTO"
             }
         },
         "cluster-worker-001-floating" : {
@@ -25,6 +33,7 @@
                 "admin_user": "root",
                 "networks" : [{ "port" : { "Ref" : "cluster-worker-001-port" }}],
                 "key_name" : "user_key",
+                "scheduler_hints" : {"group": {"Ref": "cluster-aa-group"}},
                 "user_data": {
                     "Fn::Join" : ["\n", ["line2", "line3"]]
                 }
@@ -33,7 +42,8 @@
         "cluster-worker-002-port" : {
             "Type" : "OS::Neutron::Port",
             "Properties" : {
-               "network_id" : "private_net"
+               "network_id" : "private_net",
+               "replacement_policy": "AUTO"
             }
         },
         "cluster-worker-002-floating" : {
@@ -52,7 +62,7 @@
                 "admin_user": "root",
                 "networks" : [{ "port" : { "Ref" : "cluster-worker-002-port" }}],
                 "key_name" : "user_key",
-                "scheduler_hints" : {"different_host": [{"Ref": "cluster-worker-001"}]},
+                "scheduler_hints" : {"group": {"Ref": "cluster-aa-group"}},
                 "user_data": {
                     "Fn::Join" : ["\n", ["line2", "line3"]]
                 }
@@ -61,7 +71,8 @@
         "cluster-master-001-port" : {
             "Type" : "OS::Neutron::Port",
             "Properties" : {
-               "network_id" : "private_net"
+               "network_id" : "private_net",
+               "replacement_policy": "AUTO"
             }
         },
         "cluster-master-001-floating" : {

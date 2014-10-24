@@ -356,7 +356,19 @@ class TestMigrations(base.BaseWalkMigrationTestCase, base.CommonTestsMixIn):
         # currently, 006 is just a placeholder
         pass
 
+    def _pre_upgrade_007(self, engine):
+        desc = 'magic'
+        t = db_utils.get_table(engine, 'clusters')
+        engine.execute(t.insert(), id='123', name='name', plugin_name='pname',
+                       hadoop_version='1',  management_private_key='2',
+                       management_public_key='3', status_description=desc)
+
     def _check_007(self, engine, data):
+        t = db_utils.get_table(engine, 'clusters')
+        res = engine.execute(t.select(), id='123').first()
+        self.assertEqual('magic', res['status_description'])
+        engine.execute(t.delete())
+
         # check that status_description can keep 128kb.
         # MySQL varchar can not keep more then 64kb
         desc = 'a' * 128 * 1024  # 128kb
@@ -367,3 +379,36 @@ class TestMigrations(base.BaseWalkMigrationTestCase, base.CommonTestsMixIn):
         new_desc = engine.execute(t.select()).fetchone().status_description
         self.assertEqual(desc, new_desc)
         engine.execute(t.delete())
+
+    def _check_008(self, engine, date):
+        self.assertColumnExists(engine, 'node_group_templates',
+                                'security_groups')
+        self.assertColumnExists(engine, 'node_groups', 'security_groups')
+        self.assertColumnExists(engine, 'templates_relations',
+                                'security_groups')
+
+    def _check_009(self, engine, date):
+        self.assertColumnExists(engine, 'clusters', 'rollback_info')
+
+    def _check_010(self, engine, date):
+        self.assertColumnExists(engine, 'node_group_templates',
+                                'auto_security_group')
+        self.assertColumnExists(engine, 'node_groups', 'auto_security_group')
+        self.assertColumnExists(engine, 'templates_relations',
+                                'auto_security_group')
+        self.assertColumnExists(engine, 'node_groups', 'open_ports')
+
+    def _check_011(self, engine, date):
+        self.assertColumnExists(engine, 'clusters', 'sahara_info')
+
+    def _check_012(self, engine, date):
+        self.assertColumnExists(engine, 'node_group_templates',
+                                'availability_zone')
+        self.assertColumnExists(engine, 'node_groups', 'availability_zone')
+        self.assertColumnExists(engine, 'templates_relations',
+                                'availability_zone')
+
+    def _check_014(self, engine, data):
+        self.assertColumnExists(engine, 'node_group_templates', 'volume_type')
+        self.assertColumnExists(engine, 'node_groups', 'volume_type')
+        self.assertColumnExists(engine, 'templates_relations', 'volume_type')

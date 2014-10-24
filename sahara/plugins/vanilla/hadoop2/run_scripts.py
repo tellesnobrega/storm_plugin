@@ -14,8 +14,10 @@
 # limitations under the License.
 
 from sahara import context
+from sahara.i18n import _
+from sahara.i18n import _LI
 from sahara.openstack.common import log as logging
-from sahara.plugins.general import exceptions as ex
+from sahara.plugins import exceptions as ex
 from sahara.plugins.vanilla.hadoop2 import config_helper as c_helper
 from sahara.plugins.vanilla import utils as vu
 from sahara.utils import files
@@ -50,7 +52,7 @@ def _start_processes(instance, processes):
                     'sudo su - -c  "yarn-daemon.sh start %s" hadoop' % process)
             else:
                 raise ex.HadoopProvisionError(
-                    "Process %s is not supported" % process)
+                    _("Process %s is not supported") % process)
 
 
 def start_hadoop_process(instance, process):
@@ -72,10 +74,14 @@ def start_oozie_process(pctx, instance):
     with instance.remote() as r:
         if c_helper.is_mysql_enabled(pctx, instance.node_group.cluster):
             _start_mysql(r)
+            LOG.debug("Creating Oozie DB Schema...")
             sql_script = files.get_file_text(
                 'plugins/vanilla/hadoop2/resources/create_oozie_db.sql')
-            r.write_file_to('/tmp/create_oozie_db.sql', sql_script)
-            _oozie_create_db(r)
+            script_location = "create_oozie_db.sql"
+            r.write_file_to(script_location, sql_script)
+            r.execute_command('mysql -u root < %(script_location)s && '
+                              'rm %(script_location)s' %
+                              {"script_location": script_location})
 
         _oozie_share_lib(r)
         _start_oozie(r)
@@ -127,11 +133,6 @@ def _start_mysql(remote):
     remote.execute_command('/opt/start-mysql.sh')
 
 
-def _oozie_create_db(remote):
-    LOG.debug("Creating Oozie DB Schema...")
-    remote.execute_command('mysql -u root < /tmp/create_oozie_db.sql')
-
-
 def _start_oozie(remote):
     remote.execute_command(
         'sudo su - -c "/opt/oozie/bin/oozied.sh start" hadoop')
@@ -142,12 +143,12 @@ def await_datanodes(cluster):
     if datanodes_count < 1:
         return
 
-    LOG.info("Waiting %s datanodes to start up" % datanodes_count)
+    LOG.info(_LI("Waiting %s datanodes to start up"), datanodes_count)
     with vu.get_namenode(cluster).remote() as r:
         while True:
             if _check_datanodes_count(r, datanodes_count):
                 LOG.info(
-                    'Datanodes on cluster %s has been started' %
+                    _LI('Datanodes on cluster %s has been started'),
                     cluster.name)
                 return
 
@@ -155,8 +156,8 @@ def await_datanodes(cluster):
 
             if not g.check_cluster_exists(cluster):
                 LOG.info(
-                    'Stop waiting datanodes on cluster %s since it has '
-                    'been deleted' % cluster.name)
+                    _LI('Stop waiting datanodes on cluster %s since it has '
+                        'been deleted'), cluster.name)
                 return
 
 
@@ -171,4 +172,4 @@ def _check_datanodes_count(remote, count):
         'awk \'{print $3}\'')
     LOG.debug("Datanode count='%s'" % stdout.rstrip())
 
-    return exit_code == 0 and int(stdout) == count
+    return exit_code == 0 and stdout and int(stdout) == count

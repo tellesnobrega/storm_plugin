@@ -13,8 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
+import re
+
 import mock
 import novaclient.exceptions as nova_ex
+import six
 
 from sahara.conductor import resource as r
 from sahara.plugins.vanilla import plugin
@@ -68,6 +72,10 @@ def _get_fl_ip_pool_list():
     return [FakeNetwork("d9a3bebc-f788-4b81-9a93-aa048022c1ca")]
 
 
+def _get_availability_zone_list(detailed=True):
+    return [FakeAvailabilityZone('nova')]
+
+
 def _get_heat_stack_list():
     return [FakeStack('test-heat')]
 
@@ -82,13 +90,30 @@ class FakeNetwork(object):
         self.name = name
 
 
+class FakeAvailabilityZone(object):
+    def __init__(self, name):
+        self.zoneName = name
+
+
 class FakeFlavor(object):
     def __init__(self, id):
         self.id = id
 
 
+class FakeSecurityGroup(object):
+    def __init__(self, id, name):
+        self.id = id
+        self.name = name
+
+
 def _get_flavors_list():
     return [FakeFlavor("42")]
+
+
+def _get_security_groups_list():
+    return [FakeSecurityGroup("1", "default"),
+            FakeSecurityGroup("2", "group1"),
+            FakeSecurityGroup("3", "group2")]
 
 
 def start_patch(patch_templates=True):
@@ -99,17 +124,15 @@ def start_patch(patch_templates=True):
             "sahara.service.api.get_node_group_templates")
         get_ng_template_p = mock.patch(
             "sahara.service.api.get_node_group_template")
-    get_plugins_p = mock.patch("sahara.service.api.get_plugins")
-    get_plugin_p = mock.patch(
-        "sahara.plugins.base.PluginManager.get_plugin")
     if patch_templates:
         get_cl_templates_p = mock.patch(
             "sahara.service.api.get_cluster_templates")
         get_cl_template_p = mock.patch(
             "sahara.service.api.get_cluster_template")
     nova_p = mock.patch("sahara.utils.openstack.nova.client")
-    keystone_p = mock.patch("sahara.utils.openstack.keystone.client")
+    keystone_p = mock.patch("sahara.utils.openstack.keystone._client")
     heat_p = mock.patch("sahara.utils.openstack.heat.client")
+    cinder_p = mock.patch("sahara.utils.openstack.cinder.client")
     get_image_p = mock.patch("sahara.service.api.get_image")
 
     get_image = get_image_p.start()
@@ -118,8 +141,6 @@ def start_patch(patch_templates=True):
     if patch_templates:
         get_ng_templates = get_ng_templates_p.start()
         get_ng_template = get_ng_template_p.start()
-    get_plugins = get_plugins_p.start()
-    get_plugin = get_plugin_p.start()
     if patch_templates:
         get_cl_templates = get_cl_templates_p.start()
         get_cl_template_p.start()
@@ -131,14 +152,19 @@ def start_patch(patch_templates=True):
         get_cl_templates.return_value = []
 
     nova().flavors.list.side_effect = _get_flavors_list
+    nova().security_groups.list.side_effect = _get_security_groups_list
     nova().keypairs.get.side_effect = _get_keypair
     nova().networks.find.side_effect = _get_network
     nova().floating_ip_pools.list.side_effect = _get_fl_ip_pool_list
+    nova().availability_zones.list.side_effect = _get_availability_zone_list
 
     heat = heat_p.start()
     heat().stacks.list.side_effect = _get_heat_stack_list
 
-    class Service:
+    cinder = cinder_p.start()
+    cinder().availability_zones.list.side_effect = _get_availability_zone_list
+
+    class Service(object):
         @property
         def name(self):
             return 'cinder'
@@ -148,7 +174,7 @@ def start_patch(patch_templates=True):
 
     keystone().services.list.side_effect = _services_list
 
-    class Image:
+    class Image(object):
         def __init__(self, name='test'):
             self.name = name
 
@@ -196,27 +222,17 @@ def start_patch(patch_templates=True):
 
         get_cl_templates.return_value = [r.ClusterTemplateResource(ct_dict)]
 
-    vanilla = plugin.VanillaProvider()
-    vanilla.name = 'vanilla'
-    get_plugins.return_value = [vanilla]
-
     def _get_ng_template(id):
         for template in get_ng_templates():
             if template.id == id:
                 return template
         return None
 
-    def _get_plugin(name):
-        if name == 'vanilla':
-            return vanilla
-        return None
-
-    get_plugin.side_effect = _get_plugin
     if patch_templates:
         get_ng_template.side_effect = _get_ng_template
     # request data to validate
-    patchers = [get_clusters_p, get_cluster_p, get_plugins_p, get_plugin_p,
-                nova_p, keystone_p, get_image_p, heat_p]
+    patchers = [get_clusters_p, get_cluster_p,
+                nova_p, keystone_p, get_image_p, heat_p, cinder_p]
     if patch_templates:
         patchers.extend([get_ng_template_p, get_ng_templates_p,
                          get_cl_template_p, get_cl_templates_p])
@@ -240,11 +256,39 @@ class ValidationTestCase(base.SaharaTestCase):
 
     def _assert_calls(self, mock, call_info):
         if not call_info:
-            self.assertEqual(mock.call_count, 0)
+            self.assertEqual(0, mock.call_count)
         else:
-            self.assertEqual(mock.call_count, call_info[0])
-            self.assertEqual(mock.call_args[0][0].code, call_info[1])
-            self.assertEqual(mock.call_args[0][0].message, call_info[2])
+            self.assertEqual(call_info[0], mock.call_count)
+            self.assertEqual(call_info[1], mock.call_args[0][0].code)
+            possible_messages = ([call_info[2]] if isinstance(
+                call_info[2], six.string_types) else call_info[2])
+            match = False
+            for message in possible_messages:
+                if self._check_match(message, mock.call_args[0][0].message):
+                    match = True
+                    break
+            if not match:
+                self.assertIn(mock.call_args[0][0].message, possible_messages)
+
+    def _check_match(self, expected, actual):
+        d1, r1 = self._extract_printed_dict(expected)
+        d2, r2 = self._extract_printed_dict(actual)
+
+        # Note(slukjanov): regex needed because of different
+        #                  versions of jsonschema generate different
+        #                  messages.
+        return (r1 == r2 or re.match(r1, r2)) and (d1 == d2)
+
+    def _extract_printed_dict(self, s):
+        start = s.find('{')
+        if start == -1:
+            return None, s
+
+        end = s.rfind('}')
+        if end == -1:
+            return None, s
+
+        return ast.literal_eval(s[start:end+1]), s[0:start+1] + s[end]
 
     @mock.patch("sahara.utils.api.request_data")
     @mock.patch("sahara.utils.api.bad_request")
@@ -301,20 +345,15 @@ class ValidationTestCase(base.SaharaTestCase):
                     if isinstance(value, str):
                         value_str = "'%s'" % value_str
                     data.update({p_name: value})
+                    message = ("%s is not of type '%s'" %
+                               (value_str, prop["type"]))
                     if "enum" in prop:
-                        self._assert_create_object_validation(
-                            data=data,
-                            bad_req_i=(1, 'VALIDATION_ERROR',
-                                       u"%s is not one of %s"
-                                       % (value_str, prop["enum"]))
-                        )
-                    else:
-                        self._assert_create_object_validation(
-                            data=data,
-                            bad_req_i=(1, 'VALIDATION_ERROR',
-                                       u"%s is not of type '%s'"
-                                       % (value_str, prop["type"]))
-                        )
+                        message = [message, "%s is not one of %s" %
+                                            (value_str, prop["enum"])]
+                    self._assert_create_object_validation(
+                        data=data,
+                        bad_req_i=(1, 'VALIDATION_ERROR', message)
+                    )
 
     def _assert_cluster_configs_validation(self, require_image_id=False):
         data = {

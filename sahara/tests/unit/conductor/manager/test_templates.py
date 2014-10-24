@@ -29,6 +29,7 @@ SAMPLE_NGT = {
     "name": "ngt_test",
     "node_processes": ["p1", "p2"],
     "floating_ip_pool": None,
+    "availability_zone": None,
     "node_configs": {
         "service_1": {
             "config_1": "value_1"
@@ -58,7 +59,9 @@ SAMPLE_CLT = {
             "flavor_id": "42",
             "node_processes": ["p1", "p2"],
             "count": 1,
-            "floating_ip_pool": None
+            "floating_ip_pool": None,
+            "security_groups": None,
+            "availability_zone": None,
         },
         {
             "name": "ng_2",
@@ -66,6 +69,8 @@ SAMPLE_CLT = {
             "node_processes": ["p3", "p4"],
             "count": 3,
             "floating_ip_pool": None,
+            "security_groups": ["group1", "group2"],
+            "availability_zone": None,
         }
 
     ]
@@ -184,6 +189,9 @@ class ClusterTemplates(test_base.ConductorManagerTestCase):
             ng.pop("volume_mount_prefix")
             ng.pop("volumes_size")
             ng.pop("volumes_per_node")
+            ng.pop("volumes_availability_zone")
+            ng.pop("volume_type")
+            ng.pop("auto_security_group")
 
         self.assertEqual(SAMPLE_CLT["node_groups"],
                          clt_db_obj["node_groups"])

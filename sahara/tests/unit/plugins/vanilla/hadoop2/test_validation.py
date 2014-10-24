@@ -15,7 +15,7 @@
 
 import testtools
 
-from sahara.plugins.general import exceptions as ex
+from sahara.plugins import exceptions as ex
 from sahara.plugins.vanilla import plugin as p
 from sahara.tests.unit import base
 from sahara.tests.unit import testutils as tu
@@ -84,7 +84,7 @@ class ValidationTest(base.SaharaTestCase):
             lst.append(self.ng[i])
 
         return tu.create_cluster("cluster1", "tenant1", "vanilla",
-                                 "2.3.0", lst, **kwargs)
+                                 "2.4.1", lst, **kwargs)
 
     def _validate_case(self, *args):
         cl = self._create_cluster(*args)

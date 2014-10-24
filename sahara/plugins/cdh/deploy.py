@@ -15,19 +15,20 @@
 
 import telnetlib
 
+from oslo.utils import timeutils
 import six
 
 from sahara import context
 from sahara.i18n import _
 from sahara.i18n import _LI
 from sahara.openstack.common import log as logging
-from sahara.openstack.common import timeutils
 from sahara.plugins.cdh import cloudera_utils as cu
 from sahara.plugins.cdh import commands as cmd
 from sahara.plugins.cdh import config_helper as c_helper
+from sahara.plugins.cdh import db_helper
 from sahara.plugins.cdh import utils as pu
-from sahara.plugins.general import exceptions as ex
-from sahara.plugins.general import utils as gu
+from sahara.plugins import exceptions as ex
+from sahara.plugins import utils as gu
 from sahara.swift import swift_helper
 from sahara.utils import xmlutils
 
@@ -38,6 +39,7 @@ CDH_VERSION = 'CDH5'
 HDFS_SERVICE_TYPE = 'HDFS'
 YARN_SERVICE_TYPE = 'YARN'
 OOZIE_SERVICE_TYPE = 'OOZIE'
+HIVE_SERVICE_TYPE = 'HIVE'
 
 PATH_TO_CORE_SITE_XML = '/etc/hadoop/conf/core-site.xml'
 HADOOP_LIB_DIR = '/usr/lib/hadoop-mapreduce'
@@ -46,7 +48,7 @@ PACKAGES = [
     'cloudera-manager-agent',
     'cloudera-manager-daemons',
     'cloudera-manager-server',
-    'cloudera-manager-server-db',
+    'cloudera-manager-server-db-2',
     'hadoop-hdfs-datanode',
     'hadoop-hdfs-namenode',
     'hadoop-hdfs-secondarynamenode',
@@ -54,6 +56,8 @@ PACKAGES = [
     'hadoop-mapreduce-historyserver',
     'hadoop-yarn-nodemanager',
     'hadoop-yarn-resourcemanager',
+    'hive-metastore',
+    'hive-server2',
     'oozie',
     'oracle-j2sdk1.7',
 ]
@@ -113,6 +117,19 @@ def _get_configs(service, cluster=None, node_group=None):
         all_confs = _merge_dicts(all_confs, ng_default_confs)
 
     if cluster:
+        hive_confs = {
+            'HIVE': {
+                'hive_metastore_database_type': 'postgresql',
+                'hive_metastore_database_host':
+                pu.get_manager(cluster).internal_ip,
+                'hive_metastore_database_port': '7432',
+                'hive_metastore_database_password':
+                db_helper.get_hive_db_password(cluster),
+                'mapreduce_yarn_service': cu.YARN_SERVICE_NAME
+            }
+        }
+
+        all_confs = _merge_dicts(all_confs, hive_confs)
         all_confs = _merge_dicts(all_confs, cluster.cluster_configs)
 
     return all_confs.get(service, {})
@@ -124,10 +141,10 @@ def configure_cluster(cluster):
     if not cmd.is_pre_installed_cdh(pu.get_manager(cluster).remote()):
         _configure_os(instances)
         _install_packages(instances, PACKAGES)
-        _post_install(instances)
 
     _start_cloudera_agents(instances)
     _start_cloudera_manager(cluster)
+    _await_agents(instances)
     _configure_manager(cluster)
     _create_services(cluster)
     _configure_services(cluster)
@@ -138,12 +155,15 @@ def configure_cluster(cluster):
 
 
 def scale_cluster(cluster, instances):
-    if not cmd.is_pre_installed_cdh(pu.get_manager(cluster).remote()):
+    if not instances:
+        return
+
+    if not cmd.is_pre_installed_cdh(instances[0].remote()):
         _configure_os(instances)
         _install_packages(instances, PACKAGES)
-        _post_install(instances)
 
     _start_cloudera_agents(instances)
+    _await_agents(instances)
     for instance in instances:
         _configure_instance(instance)
         cu.update_configs(instance)
@@ -162,7 +182,7 @@ def scale_cluster(cluster, instances):
             cu.start_roles(yarn, cu.get_role_name(instance, 'NODEMANAGER'))
 
 
-def decomission_cluster(cluster, instances):
+def decommission_cluster(cluster, instances):
     dns = []
     nms = []
     for i in instances:
@@ -172,10 +192,10 @@ def decomission_cluster(cluster, instances):
             nms.append(cu.get_role_name(i, 'NODEMANAGER'))
 
     if dns:
-        cu.decomission_nodes(cluster, 'DATANODE', dns)
+        cu.decommission_nodes(cluster, 'DATANODE', dns)
 
     if nms:
-        cu.decomission_nodes(cluster, 'NODEMANAGER', nms)
+        cu.decommission_nodes(cluster, 'NODEMANAGER', nms)
 
     cu.delete_instances(cluster, instances)
 
@@ -233,25 +253,35 @@ def _install_pkgs(instance, packages):
         cmd.install_packages(r, packages)
 
 
-def _post_install(instances):
-    with context.ThreadGroup() as tg:
-        for i in instances:
-            tg.spawn('cdh-post-inst-%s' % i.instance_name,
-                     _stop_services, i)
-
-
-def _stop_services(instance):
-    with instance.remote() as r:
-        cmd.stop_resourcemanager(r)
-        cmd.stop_nodemanager(r)
-        cmd.stop_historyserver(r)
-
-
 def _start_cloudera_agents(instances):
     with context.ThreadGroup() as tg:
         for i in instances:
             tg.spawn('cdh-agent-start-%s' % i.instance_name,
                      _start_cloudera_agent, i)
+
+
+def _await_agents(instances):
+    api = cu.get_api_client(instances[0].node_group.cluster)
+    timeout = 300
+    LOG.debug("Waiting %(timeout)s seconds for agent connected to manager" % {
+        'timeout': timeout})
+    s_time = timeutils.utcnow()
+    while timeutils.delta_seconds(s_time, timeutils.utcnow()) < timeout:
+        hostnames = [i.fqdn() for i in instances]
+        hostnames_to_manager = [h.hostname for h in api.get_all_hosts('full')]
+        is_ok = True
+        for hostname in hostnames:
+            if hostname not in hostnames_to_manager:
+                is_ok = False
+                break
+
+        if not is_ok:
+            context.sleep(5)
+        else:
+            break
+    else:
+        raise ex.HadoopProvisionError(_("Cloudera agents failed to connect to"
+                                        " Cloudera Manager"))
 
 
 def _start_cloudera_agent(instance):
@@ -297,6 +327,8 @@ def _create_services(cluster):
     cm_cluster.create_service(cu.HDFS_SERVICE_NAME, HDFS_SERVICE_TYPE)
     cm_cluster.create_service(cu.YARN_SERVICE_NAME, YARN_SERVICE_TYPE)
     cm_cluster.create_service(cu.OOZIE_SERVICE_NAME, OOZIE_SERVICE_TYPE)
+    if pu.get_hive_metastore(cluster):
+        cm_cluster.create_service(cu.HIVE_SERVICE_NAME, HIVE_SERVICE_TYPE)
 
 
 def _configure_services(cluster):
@@ -310,6 +342,10 @@ def _configure_services(cluster):
 
     oozie = cm_cluster.get_service(cu.OOZIE_SERVICE_NAME)
     oozie.update_config(_get_configs(OOZIE_SERVICE_TYPE, cluster=cluster))
+
+    if pu.get_hive_metastore(cluster):
+        hive = cm_cluster.get_service(cu.HIVE_SERVICE_NAME)
+        hive.update_config(_get_configs(HIVE_SERVICE_TYPE, cluster=cluster))
 
 
 def _configure_instances(instances):
@@ -356,6 +392,20 @@ def _configure_swift_to_inst(instance):
         r.write_file_to(PATH_TO_CORE_SITE_XML, new_core_site, run_as_root=True)
 
 
+def _configure_hive(cluster):
+    manager = pu.get_manager(cluster)
+    with manager.remote() as r:
+        db_helper.create_hive_database(cluster, r)
+
+    # Hive requires /tmp/hive-hive directory
+    namenode = pu.get_namenode(cluster)
+    with namenode.remote() as r:
+        r.execute_command(
+            'sudo su - -c "hadoop fs -mkdir -p /tmp/hive-hive" hdfs')
+        r.execute_command(
+            'sudo su - -c "hadoop fs -chown hive /tmp/hive-hive" hdfs')
+
+
 def start_cluster(cluster):
     cm_cluster = cu.get_cloudera_cluster(cluster)
 
@@ -371,3 +421,10 @@ def start_cluster(cluster):
     cu.create_oozie_db(oozie)
     cu.install_oozie_sharelib(oozie)
     cu.start_service(oozie)
+
+    if pu.get_hive_metastore(cluster):
+        hive = cm_cluster.get_service(cu.HIVE_SERVICE_NAME)
+        _configure_hive(cluster)
+        cu.create_hive_metastore_db(hive)
+        cu.create_hive_dirs(hive)
+        cu.start_service(hive)

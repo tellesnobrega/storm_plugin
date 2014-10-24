@@ -24,6 +24,10 @@ LOG = logging.getLogger(__name__)
 CONF = cfg.CONF
 
 
+def get_plugin_configs():
+    return {}
+
+
 def get_config_value(service, name, cluster=None):
     if cluster:
         for ng in cluster.node_groups:

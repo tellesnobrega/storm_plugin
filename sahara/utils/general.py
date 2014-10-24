@@ -13,15 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
+
 import six
 
 from sahara import conductor as c
 from sahara import context
 from sahara.i18n import _LI
 from sahara.openstack.common import log as logging
+from sahara.utils.notification import sender
 
 conductor = c.API
 LOG = logging.getLogger(__name__)
+
+NATURAL_SORT_RE = re.compile('([0-9]+)')
 
 
 def find_dict(iterable, **rules):
@@ -60,6 +65,13 @@ def get_by_id(lst, id):
     return None
 
 
+# Taken from http://stackoverflow.com/questions/4836710/does-
+# python-have-a-built-in-function-for-string-natural-sort
+def natural_sort_key(s):
+    return [int(text) if text.isdigit() else text.lower()
+            for text in re.split(NATURAL_SORT_RE, s)]
+
+
 def change_cluster_status(cluster, status, status_description=None):
     if cluster is None:
         return None
@@ -69,20 +81,14 @@ def change_cluster_status(cluster, status, status_description=None):
         update_dict["status_description"] = status_description
 
     cluster = conductor.cluster_update(context.ctx(), cluster, update_dict)
+
     LOG.info(_LI("Cluster status has been changed: id=%(id)s, New status="
                  "%(status)s"), {'id': cluster.id, 'status': cluster.status})
+
+    sender.notify(context.ctx(), cluster.id, cluster.name, cluster.status,
+                  "update")
+
     return cluster
-
-
-def format_cluster_deleted_message(cluster):
-    msg = _LI("Cluster %(name)s (id=%(id)s) was deleted. "
-              "Canceling current operation.")
-
-    if cluster:
-        return (msg, {'name': cluster.name,
-                      'id': cluster.id})
-    return (msg, {'name': _LI("Unknown"),
-                  'id': _LI("Unknown")})
 
 
 def check_cluster_exists(cluster):
@@ -124,3 +130,12 @@ def generate_etc_hosts(cluster):
 
 def generate_instance_name(cluster_name, node_group_name, index):
     return ("%s-%s-%03d" % (cluster_name, node_group_name, index)).lower()
+
+
+def generate_auto_security_group_name(node_group):
+    return ("%s-%s-%s" % (node_group.cluster.name, node_group.name,
+                          node_group.id[:8])).lower()
+
+
+def generate_aa_group_name(cluster_name):
+    return ("%s-aa-group" % cluster_name).lower()

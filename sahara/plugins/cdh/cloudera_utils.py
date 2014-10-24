@@ -25,7 +25,7 @@ except ImportError:
 
 from sahara.i18n import _
 from sahara.plugins.cdh import utils as pu
-from sahara.plugins.general import exceptions as ex
+from sahara.plugins import exceptions as ex
 
 CM_DEFAULT_USERNAME = 'admin'
 CM_DEFAULT_PASSWD = 'admin'
@@ -33,6 +33,7 @@ CM_DEFAULT_PASSWD = 'admin'
 HDFS_SERVICE_NAME = 'hdfs01'
 YARN_SERVICE_NAME = 'yarn01'
 OOZIE_SERVICE_NAME = 'oozie01'
+HIVE_SERVICE_NAME = 'hive01'
 
 
 def have_cm_api_libs():
@@ -69,10 +70,12 @@ def start_instances(cluster):
 
 def delete_instances(cluster, instances):
     api = get_api_client(cluster)
+    cm_cluster = get_cloudera_cluster(cluster)
     hosts = api.get_all_hosts(view='full')
     hostsnames_to_deleted = [i.fqdn() for i in instances]
     for host in hosts:
         if host.hostname in hostsnames_to_deleted:
+            cm_cluster.remove_host(host.hostId)
             api.delete_host(host.hostId)
 
 
@@ -91,13 +94,15 @@ def get_service(process, cluster=None, instance=None):
         return cm_cluster.get_service(YARN_SERVICE_NAME)
     elif process in ['OOZIE_SERVER']:
         return cm_cluster.get_service(OOZIE_SERVICE_NAME)
+    elif process in ['HIVESERVER2', 'HIVEMETASTORE', 'WEBHCAT']:
+        return cm_cluster.get_service(HIVE_SERVICE_NAME)
     else:
         raise ValueError(
             _("Process %(process)s is not supported by CDH plugin") %
             {'process': process})
 
 
-def decomission_nodes(cluster, process, role_names):
+def decommission_nodes(cluster, process, role_names):
     service = get_service(process, cluster)
     service.decommission(*role_names).wait()
     for role_name in role_names:
@@ -131,17 +136,20 @@ def update_configs(instance):
 def get_role_name(instance, service):
     # NOTE: role name must match regexp "[_A-Za-z][-_A-Za-z0-9]{0,63}"
     shortcuts = {
-        'NAMENODE': 'NN',
+        'ALERTPUBLISHER': 'AP',
         'DATANODE': 'DN',
-        'SECONDARYNAMENODE': 'SNN',
-        'RESOURCEMANAGER': 'RM',
-        'NODEMANAGER': 'NM',
-        'JOBHISTORY': 'JS',
-        'OOZIE_SERVER': 'OS',
-        'SERVICEMONITOR': 'SM',
-        'HOSTMONITOR': 'HM',
         'EVENTSERVER': 'ES',
-        'ALERTPUBLISHER': 'AP'
+        'HIVEMETASTORE': 'HVM',
+        'HIVESERVER2': 'HVS',
+        'HOSTMONITOR': 'HM',
+        'JOBHISTORY': 'JS',
+        'NAMENODE': 'NN',
+        'NODEMANAGER': 'NM',
+        'OOZIE_SERVER': 'OS',
+        'RESOURCEMANAGER': 'RM',
+        'SECONDARYNAMENODE': 'SNN',
+        'SERVICEMONITOR': 'SM',
+        'WEBHCAT': 'WHC'
     }
     return '%s_%s' % (shortcuts.get(service, service),
                       instance.hostname().replace('-', '_'))
@@ -175,7 +183,7 @@ def start_service(service):
 
 
 @cloudera_cmd
-def start_roles(service, role_names):
+def start_roles(service, *role_names):
     for role in service.start_roles(*role_names):
         yield role
 
@@ -193,3 +201,14 @@ def create_oozie_db(oozie_service):
 @cloudera_cmd
 def install_oozie_sharelib(oozie_service):
     yield oozie_service.install_oozie_sharelib()
+
+
+@cloudera_cmd
+def create_hive_metastore_db(hive_service):
+    yield hive_service.create_hive_metastore_tables()
+
+
+@cloudera_cmd
+def create_hive_dirs(hive_service):
+    yield hive_service.create_hive_userdir()
+    yield hive_service.create_hive_warehouse()

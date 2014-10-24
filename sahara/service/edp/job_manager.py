@@ -16,17 +16,20 @@
 import datetime
 
 from oslo.config import cfg
+from oslo.utils import timeutils
 
 from sahara import conductor as c
 from sahara import context
 from sahara import exceptions as e
 from sahara.i18n import _
 from sahara.i18n import _LE
+from sahara.i18n import _LI
 from sahara.openstack.common import log
 from sahara.service.edp import job_utils
 from sahara.service.edp.oozie import engine as oozie_engine
 from sahara.service.edp.spark import engine as spark_engine
 from sahara.utils import edp
+from sahara.utils import proxy as p
 
 
 LOG = log.getLogger(__name__)
@@ -35,23 +38,8 @@ CONF = cfg.CONF
 
 conductor = c.API
 
-
-def _make_engine(name, job_types, engine_class):
-    return {"name": name,
-            "job_types": job_types,
-            "engine": engine_class}
-
-default_engines = [_make_engine("oozie",
-                                [edp.JOB_TYPE_HIVE,
-                                 edp.JOB_TYPE_JAVA,
-                                 edp.JOB_TYPE_MAPREDUCE,
-                                 edp.JOB_TYPE_MAPREDUCE_STREAMING,
-                                 edp.JOB_TYPE_PIG],
-                                oozie_engine.OozieJobEngine),
-                   _make_engine("spark",
-                                [edp.JOB_TYPE_JAVA],
-                                spark_engine.SparkJobEngine)
-                   ]
+ENGINES = [oozie_engine.OozieJobEngine,
+           spark_engine.SparkJobEngine]
 
 
 def _get_job_type(job_execution):
@@ -61,14 +49,16 @@ def _get_job_type(job_execution):
 def _get_job_engine(cluster, job_execution):
     return job_utils.get_plugin(cluster).get_edp_engine(cluster,
                                                         _get_job_type(
-                                                            job_execution),
-                                                        default_engines)
+                                                            job_execution))
 
 
 def _write_job_status(job_execution, job_info):
     update = {"info": job_info}
     if job_info['status'] in edp.JOB_STATUSES_TERMINATED:
         update['end_time'] = datetime.datetime.now()
+        job_configs = p.delete_proxy_user_for_job_execution(job_execution)
+        if job_configs:
+            update['job_configs'] = job_configs
     return conductor.job_execution_update(context.ctx(),
                                           job_execution,
                                           update)
@@ -143,20 +133,45 @@ def run_job(job_execution_id):
 def cancel_job(job_execution_id):
     ctx = context.ctx()
     job_execution = conductor.job_execution_get(ctx, job_execution_id)
+    if job_execution.info['status'] in edp.JOB_STATUSES_TERMINATED:
+        return job_execution
     cluster = conductor.cluster_get(ctx, job_execution.cluster_id)
-    if cluster is not None:
-        engine = _get_job_engine(cluster, job_execution)
-        if engine is not None:
-            try:
-                job_info = engine.cancel_job(job_execution)
-            except Exception as e:
-                job_info = None
-                LOG.exception(
-                    _LE("Error during cancel of job execution %(job)s: "
-                        "%(error)s"), {'job': job_execution.id, 'error': e})
-            if job_info is not None:
-                job_execution = _write_job_status(job_execution, job_info)
-    return job_execution
+    if cluster is None:
+        return job_execution
+    engine = _get_job_engine(cluster, job_execution)
+    if engine is not None:
+        job_execution = conductor.job_execution_update(
+            ctx, job_execution_id,
+            {'info': {'status': edp.JOB_STATUS_TOBEKILLED}})
+
+        timeout = CONF.job_canceling_timeout
+        s_time = timeutils.utcnow()
+        while timeutils.delta_seconds(s_time, timeutils.utcnow()) < timeout:
+            if job_execution.info['status'] not in edp.JOB_STATUSES_TERMINATED:
+                try:
+                    job_info = engine.cancel_job(job_execution)
+                except Exception as ex:
+                    job_info = None
+                    LOG.exception(
+                        _LE("Error during cancel of job execution %(job)s: "
+                            "%(error)s"), {'job': job_execution.id,
+                                           'error': ex})
+                if job_info is not None:
+                    job_execution = _write_job_status(job_execution, job_info)
+                    LOG.info(_LI("Job execution %s was canceled successfully"),
+                             job_execution.id)
+                    return job_execution
+                context.sleep(3)
+                job_execution = conductor.job_execution_get(
+                    ctx, job_execution_id)
+            else:
+                LOG.info(_LI("Job execution status %(job)s: %(status)s"),
+                         {'job': job_execution.id,
+                          'status': job_execution.info['status']})
+                return job_execution
+        else:
+            raise e.CancelingFailed(_('Job execution %s was not canceled')
+                                    % job_execution.id)
 
 
 def get_job_status(job_execution_id):
@@ -183,9 +198,6 @@ def update_job_statuses():
 
 
 def get_job_config_hints(job_type):
-    # TODO(tmckay) We need plugin-specific config hints
-    # (not a new problem) so this will need to change.  However,
-    # at the moment we don't have a plugin or cluster argument
-    # in this call so we will have to just use the configs for
-    # Oozie
-    return oozie_engine.get_possible_job_config(job_type)
+    for eng in ENGINES:
+        if job_type in eng.get_supported_job_types():
+            return eng.get_possible_job_config(job_type)
