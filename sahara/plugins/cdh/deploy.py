@@ -40,6 +40,8 @@ HDFS_SERVICE_TYPE = 'HDFS'
 YARN_SERVICE_TYPE = 'YARN'
 OOZIE_SERVICE_TYPE = 'OOZIE'
 HIVE_SERVICE_TYPE = 'HIVE'
+HUE_SERVICE_TYPE = 'HUE'
+SPARK_SERVICE_TYPE = 'SPARK_ON_YARN'
 
 PATH_TO_CORE_SITE_XML = '/etc/hadoop/conf/core-site.xml'
 HADOOP_LIB_DIR = '/usr/lib/hadoop-mapreduce'
@@ -58,8 +60,12 @@ PACKAGES = [
     'hadoop-yarn-resourcemanager',
     'hive-metastore',
     'hive-server2',
+    'hue',
+    'ntp',
     'oozie',
     'oracle-j2sdk1.7',
+    'spark-history-server',
+    'unzip'
 ]
 
 LOG = logging.getLogger(__name__)
@@ -90,6 +96,13 @@ def _get_configs(service, cluster=None, node_group=None):
         },
         'YARN': {
             'hdfs_service': cu.HDFS_SERVICE_NAME
+        },
+        'HUE': {
+            'hive_service': cu.HIVE_SERVICE_NAME,
+            'oozie_service': cu.OOZIE_SERVICE_NAME
+        },
+        'SPARK_ON_YARN': {
+            'yarn_service': cu.YARN_SERVICE_NAME
         }
     }
 
@@ -128,7 +141,14 @@ def _get_configs(service, cluster=None, node_group=None):
                 'mapreduce_yarn_service': cu.YARN_SERVICE_NAME
             }
         }
+        hue_confs = {
+            'HUE': {
+                'hue_webhdfs': cu.get_role_name(pu.get_namenode(cluster),
+                                                'NAMENODE')
+            }
+        }
 
+        all_confs = _merge_dicts(all_confs, hue_confs)
         all_confs = _merge_dicts(all_confs, hive_confs)
         all_confs = _merge_dicts(all_confs, cluster.cluster_configs)
 
@@ -287,6 +307,7 @@ def _await_agents(instances):
 def _start_cloudera_agent(instance):
     mng_hostname = pu.get_manager(instance.node_group.cluster).hostname()
     with instance.remote() as r:
+        cmd.start_ntp(r)
         cmd.configure_agent(r, mng_hostname)
         cmd.start_agent(r)
 
@@ -329,6 +350,10 @@ def _create_services(cluster):
     cm_cluster.create_service(cu.OOZIE_SERVICE_NAME, OOZIE_SERVICE_TYPE)
     if pu.get_hive_metastore(cluster):
         cm_cluster.create_service(cu.HIVE_SERVICE_NAME, HIVE_SERVICE_TYPE)
+    if pu.get_hue(cluster):
+        cm_cluster.create_service(cu.HUE_SERVICE_NAME, HUE_SERVICE_TYPE)
+    if pu.get_spark_historyserver(cluster):
+        cm_cluster.create_service(cu.SPARK_SERVICE_NAME, SPARK_SERVICE_TYPE)
 
 
 def _configure_services(cluster):
@@ -346,6 +371,14 @@ def _configure_services(cluster):
     if pu.get_hive_metastore(cluster):
         hive = cm_cluster.get_service(cu.HIVE_SERVICE_NAME)
         hive.update_config(_get_configs(HIVE_SERVICE_TYPE, cluster=cluster))
+
+    if pu.get_hue(cluster):
+        hue = cm_cluster.get_service(cu.HUE_SERVICE_NAME)
+        hue.update_config(_get_configs(HUE_SERVICE_TYPE, cluster=cluster))
+
+    if pu.get_spark_historyserver(cluster):
+        spark = cm_cluster.get_service(cu.SPARK_SERVICE_NAME)
+        spark.update_config(_get_configs(SPARK_SERVICE_TYPE, cluster=cluster))
 
 
 def _configure_instances(instances):
@@ -406,6 +439,42 @@ def _configure_hive(cluster):
             'sudo su - -c "hadoop fs -chown hive /tmp/hive-hive" hdfs')
 
 
+def _configure_spark(cluster):
+    spark = pu.get_spark_historyserver(cluster)
+    with spark.remote() as r:
+        r.execute_command(
+            'sudo su - -c "hdfs dfs -mkdir -p /user/spark/applicationHistory" '
+            'hdfs')
+        r.execute_command(
+            'sudo su - -c "hdfs dfs -mkdir -p /user/spark/share/lib" hdfs')
+        r.execute_command(
+            'sudo su - -c "hdfs dfs -put /usr/lib/spark/assembly/lib/'
+            'spark-assembly-hadoop* /user/spark/share/lib/spark-assembly.jar"'
+            ' hdfs')
+        r.execute_command(
+            'sudo su - -c "hdfs dfs -chown -R spark:spark /user/spark" hdfs')
+        r.execute_command(
+            'sudo su - -c "hdfs dfs -chmod 0751 /user/spark" hdfs')
+        r.execute_command(
+            'sudo su - -c "hdfs dfs -chmod 1777 /user/spark/'
+            'applicationHistory" hdfs')
+
+
+def _install_extjs(cluster):
+    extjs_remote_location = c_helper.get_extjs_lib_url(cluster)
+    extjs_vm_location_dir = '/var/lib/oozie'
+    extjs_vm_location_path = extjs_vm_location_dir + '/extjs.zip'
+    with pu.get_oozie(cluster).remote() as r:
+        if r.execute_command('ls %s/ext-2.2' % extjs_vm_location_dir,
+                             raise_when_error=False)[0] != 0:
+            r.execute_command('curl -L -o \'%s\' %s' % (
+                extjs_vm_location_path,  extjs_remote_location),
+                run_as_root=True)
+            r.execute_command('unzip %s -d %s' % (
+                extjs_vm_location_path, extjs_vm_location_dir),
+                run_as_root=True)
+
+
 def start_cluster(cluster):
     cm_cluster = cu.get_cloudera_cluster(cluster)
 
@@ -417,10 +486,13 @@ def start_cluster(cluster):
     cu.create_yarn_job_history_dir(yarn)
     cu.start_service(yarn)
 
-    oozie = cm_cluster.get_service(cu.OOZIE_SERVICE_NAME)
-    cu.create_oozie_db(oozie)
-    cu.install_oozie_sharelib(oozie)
-    cu.start_service(oozie)
+    oozie_inst = pu.get_oozie(cluster)
+    if oozie_inst:
+        _install_extjs(cluster)
+        oozie = cm_cluster.get_service(cu.OOZIE_SERVICE_NAME)
+        cu.create_oozie_db(oozie)
+        cu.install_oozie_sharelib(oozie)
+        cu.start_service(oozie)
 
     if pu.get_hive_metastore(cluster):
         hive = cm_cluster.get_service(cu.HIVE_SERVICE_NAME)
@@ -428,3 +500,38 @@ def start_cluster(cluster):
         cu.create_hive_metastore_db(hive)
         cu.create_hive_dirs(hive)
         cu.start_service(hive)
+
+    if pu.get_hue(cluster):
+        hue = cm_cluster.get_service(cu.HUE_SERVICE_NAME)
+        cu.start_service(hue)
+
+    if pu.get_spark_historyserver(cluster):
+        _configure_spark(cluster)
+        spark = cm_cluster.get_service(cu.SPARK_SERVICE_NAME)
+        cu.start_service(spark)
+
+
+def get_open_ports(node_group):
+    ports = [9000]  # for CM agent
+
+    ports_map = {
+        'MANAGER': [7180, 7182, 7183, 7432, 7184, 8084, 8086, 10101,
+                    9997, 9996, 8087, 9998, 9999, 8085, 9995, 9994],
+        'NAMENODE': [8020, 8022, 50070, 50470],
+        'SECONDARYNAMENODE': [50090, 50495],
+        'DATANODE': [50010, 1004, 50075, 1006, 50020],
+        'RESOURCEMANAGER': [8030, 8031, 8032, 8033, 8088],
+        'NODEMANAGER': [8040, 8041, 8042],
+        'JOBHISTORY': [10020, 19888],
+        'HIVEMETASTORE': [9083],
+        'HIVESERVER2': [10000],
+        'HUE_SERVER': [8888],
+        'OOZIE_SERVER': [11000, 11001],
+        'SPARK_YARN_HISTORY_SERVER': [18088]
+    }
+
+    for process in node_group.node_processes:
+        if process in ports_map:
+            ports.extend(ports_map[process])
+
+    return ports

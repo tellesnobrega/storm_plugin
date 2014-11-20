@@ -79,11 +79,15 @@ class StormProvider(p.ProvisioningPluginBase):
     def start_cluster(self, cluster):
         sm_instance = utils.get_instance(cluster, "nimbus")
         sl_instances = utils.get_instances(cluster, "supervisor")
+        zk_instance = utils.get_instances(cluster, "zookeeper")
+
+        if zk_instance:
+            with remote.get_remote(zk_instance) as r:
+                run.start_zookeeper(r)
 
         # start storm master
         if sm_instance:
             with remote.get_remote(sm_instance) as r:
-                run.start_zookeeper(r)
                 run.start_storm_nimbus_and_ui(r)
                 LOG.info("Storm master at '%s' has been started",
                          sm_instance.hostname())

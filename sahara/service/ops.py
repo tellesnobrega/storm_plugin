@@ -21,6 +21,7 @@ from oslo import messaging
 
 from sahara import conductor as c
 from sahara import context
+from sahara import exceptions
 from sahara.i18n import _LE
 from sahara.i18n import _LI
 from sahara.openstack.common import log as logging
@@ -46,10 +47,6 @@ def setup_ops(engine):
     INFRA = engine
 
 
-def get_engine_type_and_version():
-    return INFRA.get_type_and_version()
-
-
 class LocalOps(object):
     def provision_cluster(self, cluster_id):
         context.spawn("cluster-creating-%s" % cluster_id,
@@ -70,6 +67,13 @@ class LocalOps(object):
     def cancel_job_execution(self, job_execution_id):
         context.spawn("Canceling Job Execution %s" % job_execution_id,
                       _cancel_job_execution, job_execution_id)
+
+    def delete_job_execution(self, job_execution_id):
+        context.spawn("Deleting Job Execution %s" % job_execution_id,
+                      _delete_job_execution, job_execution_id)
+
+    def get_engine_type_and_version(self):
+        return INFRA.get_type_and_version()
 
 
 class RemoteOps(rpc_utils.RPCClient):
@@ -94,6 +98,13 @@ class RemoteOps(rpc_utils.RPCClient):
         self.cast('cancel_job_execution',
                   job_execution_id=job_execution_id)
 
+    def delete_job_execution(self, job_execution_id):
+        self.cast('delete_job_execution',
+                  job_execution_id=job_execution_id)
+
+    def get_engine_type_and_version(self):
+        return self.call('get_engine_type_and_version')
+
 
 class OpsServer(rpc_utils.RPCServer):
     def __init__(self):
@@ -115,6 +126,12 @@ class OpsServer(rpc_utils.RPCServer):
 
     def cancel_job_execution(self, job_execution_id):
         _cancel_job_execution(job_execution_id)
+
+    def delete_job_execution(self, job_execution_id):
+        _delete_job_execution(job_execution_id)
+
+    def get_engine_type_and_version(self):
+        return INFRA.get_type_and_version()
 
 
 def ops_error_handler(f):
@@ -184,7 +201,7 @@ def _prepare_provisioning(cluster_id):
 
 def _update_sahara_info(ctx, cluster):
     sahara_info = {
-        'infrastructure_engine': get_engine_type_and_version(),
+        'infrastructure_engine': INFRA.get_type_and_version(),
         'remote': remote.get_remote_type_and_version()}
 
     return conductor.cluster_update(
@@ -278,3 +295,12 @@ def _run_edp_job(job_execution_id):
 
 def _cancel_job_execution(job_execution_id):
     job_manager.cancel_job(job_execution_id)
+
+
+def _delete_job_execution(job_execution_id):
+    try:
+        _cancel_job_execution(job_execution_id)
+    except exceptions.CancelingFailed:
+        LOG.error(_LE("Job execution %s can't be cancelled in time. "
+                      "Deleting it anyway."), job_execution_id)
+    conductor.job_execution_destroy(context.ctx(), job_execution_id)
