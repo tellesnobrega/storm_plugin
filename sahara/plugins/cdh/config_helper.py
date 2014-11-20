@@ -39,6 +39,7 @@ DEFAULT_CM5_CENTOS_REPO_LIST_URL = ('http://archive.cloudera.com/cm5/redhat'
 DEFAULT_SWIFT_LIB_URL = ('https://repository.cloudera.com/artifactory/repo/org'
                          '/apache/hadoop/hadoop-openstack/2.3.0-cdh5.1.0'
                          '/hadoop-openstack-2.3.0-cdh5.1.0.jar')
+DEFAULT_EXTJS_LIB_URL = 'http://extjs.com/deploy/ext-2.2.zip'
 
 CDH5_REPO_URL = p.Config(
     'CDH5 repo list URL', 'general', 'cluster', priority=1,
@@ -67,9 +68,16 @@ SWIFT_LIB_URL = p.Config(
                  "downloaded from VM."))
 
 
+EXTJS_LIB_URL = p.Config(
+    "ExtJS library URL", 'general', 'cluster', priority=1,
+    default_value=DEFAULT_EXTJS_LIB_URL,
+    description=("Ext 2.2 library is required for Oozie Web Console. "
+                 "The file will be downloaded from VM with oozie."))
+
+
 def _get_cluster_plugin_configs():
     return [CDH5_REPO_URL, CDH5_REPO_KEY_URL, CM5_REPO_URL, CM5_REPO_KEY_URL,
-            ENABLE_SWIFT, SWIFT_LIB_URL]
+            ENABLE_SWIFT, SWIFT_LIB_URL, EXTJS_LIB_URL]
 
 
 # ng wide configs
@@ -95,6 +103,10 @@ hive_service_confs = _load_json(path_to_config + 'hive-service.json')
 hive_metastore_confs = _load_json(path_to_config + 'hive-metastore.json')
 hive_hiveserver_confs = _load_json(path_to_config + 'hive-hiveserver2.json')
 hive_webhcat_confs = _load_json(path_to_config + 'hive-webhcat.json')
+hue_service_confs = _load_json(path_to_config + 'hue-service.json')
+hue_role_confs = _load_json(path_to_config + 'hue-hue.json')
+spark_service_confs = _load_json(path_to_config + 'spark-service.json')
+spark_role_confs = _load_json(path_to_config + 'spark-history.json')
 
 priority_one_confs = _load_json(path_to_config + 'priority-one-confs.json')
 
@@ -134,6 +146,10 @@ def _get_ng_plugin_configs():
     cfg += _init_configs(hive_metastore_confs, 'HIVEMETASTORE', 'node')
     cfg += _init_configs(hive_hiveserver_confs, 'HIVESERVER', 'node')
     cfg += _init_configs(hive_webhcat_confs, 'WEBHCAT', 'node')
+    cfg += _init_configs(hue_service_confs, 'HUE', 'cluster')
+    cfg += _init_configs(hue_role_confs, 'HUE', 'node')
+    cfg += _init_configs(spark_service_confs, 'SPARK_ON_YARN', 'cluster')
+    cfg += _init_configs(spark_role_confs, 'SPARK_ON_YARN', 'node')
     return cfg
 
 
@@ -170,3 +186,7 @@ def is_swift_enabled(cluster):
 
 def get_swift_lib_url(cluster):
     return _get_config_value(cluster, SWIFT_LIB_URL)
+
+
+def get_extjs_lib_url(cluster):
+    return _get_config_value(cluster, EXTJS_LIB_URL)

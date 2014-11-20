@@ -29,11 +29,14 @@ from sahara.plugins import exceptions as ex
 
 CM_DEFAULT_USERNAME = 'admin'
 CM_DEFAULT_PASSWD = 'admin'
+CM_API_VERSION = 7
 
 HDFS_SERVICE_NAME = 'hdfs01'
 YARN_SERVICE_NAME = 'yarn01'
 OOZIE_SERVICE_NAME = 'oozie01'
 HIVE_SERVICE_NAME = 'hive01'
+HUE_SERVICE_NAME = 'hue01'
+SPARK_SERVICE_NAME = 'spark_on_yarn01'
 
 
 def have_cm_api_libs():
@@ -54,7 +57,8 @@ def cloudera_cmd(f):
 def get_api_client(cluster):
     manager_ip = pu.get_manager(cluster).management_ip
     return api_client.ApiResource(manager_ip, username=CM_DEFAULT_USERNAME,
-                                  password=CM_DEFAULT_PASSWD)
+                                  password=CM_DEFAULT_PASSWD,
+                                  version=CM_API_VERSION)
 
 
 def get_cloudera_cluster(cluster):
@@ -96,6 +100,10 @@ def get_service(process, cluster=None, instance=None):
         return cm_cluster.get_service(OOZIE_SERVICE_NAME)
     elif process in ['HIVESERVER2', 'HIVEMETASTORE', 'WEBHCAT']:
         return cm_cluster.get_service(HIVE_SERVICE_NAME)
+    elif process in ['HUE_SERVER']:
+        return cm_cluster.get_service(HUE_SERVICE_NAME)
+    elif process in ['SPARK_YARN_HISTORY_SERVER']:
+        return cm_cluster.get_service(SPARK_SERVICE_NAME)
     else:
         raise ValueError(
             _("Process %(process)s is not supported by CDH plugin") %
@@ -149,7 +157,8 @@ def get_role_name(instance, service):
         'RESOURCEMANAGER': 'RM',
         'SECONDARYNAMENODE': 'SNN',
         'SERVICEMONITOR': 'SM',
-        'WEBHCAT': 'WHC'
+        'WEBHCAT': 'WHC',
+        'SPARK_YARN_HISTORY_SERVER': 'SHS',
     }
     return '%s_%s' % (shortcuts.get(service, service),
                       instance.hostname().replace('-', '_'))

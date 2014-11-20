@@ -53,7 +53,9 @@ class CDHPluginProvider(p.ProvisioningPluginBase):
             "HIVE": [],
             "HIVESERVER": ['HIVESERVER2'],
             "HIVEMETASTORE": ['HIVEMETASTORE'],
-            "WEBHCAT": ['WEBHCAT']
+            "WEBHCAT": ['WEBHCAT'],
+            "HUE": ['HUE_SERVER'],
+            "SPARK_ON_YARN": ['SPARK_YARN_HISTORY_SERVER']
         }
 
     def get_configs(self, hadoop_version):
@@ -97,3 +99,6 @@ class CDHPluginProvider(p.ProvisioningPluginBase):
         if job_type in edp_engine.EdpOozieEngine.get_supported_job_types():
             return edp_engine.EdpOozieEngine(cluster)
         return None
+
+    def get_open_ports(self, node_group):
+        return dp.get_open_ports(node_group)
