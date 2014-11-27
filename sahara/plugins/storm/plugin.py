@@ -82,8 +82,7 @@ class StormProvider(p.ProvisioningPluginBase):
         zk_instance = utils.get_instances(cluster, "zookeeper")
 
         if zk_instance:
-            with remote.get_remote(zk_instance) as r:
-                run.start_zookeeper(r)
+            self._start_zookeeper_processes(zk_instance)
 
         # start storm master
         if sm_instance:
@@ -139,6 +138,16 @@ class StormProvider(p.ProvisioningPluginBase):
     def _start_slaves(self, instance):
         with instance.remote() as r:
             run.start_storm_supervisor(r)
+
+    def _start_zookeeper_processes(self, zk_instances):
+        with context.ThreadGroup() as tg:
+            for i in zk_instances:
+                tg.spawn('storm-start-zk-%s' % i.instance_name,
+                         self._start_zookeeper, i)
+
+    def _start_zookeeper(self, instance):
+        with instance.remote() as r:
+            run.start_zookeeper(r)
 
     def _setup_instances(self, cluster, instances=None):
         extra = self._extract_configs_to_extra(cluster)
